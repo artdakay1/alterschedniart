@@ -1,0 +1,62 @@
+[
+  {
+    "id": "bsit-1",
+    "deptCode": "BSIT",
+    "deptName": "Bachelor of Science in Information Technology",
+    "yearLevelNum": 1,
+    "title": "1st Year Level",
+    "subTitle": "Freshman computing fundamentals, introduction to IT, and general education subjects",
+    "targetSubjectsYearLevel": "1st Year",
+    "isHighSchool": false
+  },
+  {
+    "id": "bsit-2",
+    "deptCode": "BSIT",
+    "deptName": "Bachelor of Science in Information Technology",
+    "yearLevelNum": 2,
+    "title": "2nd Year Level",
+    "subTitle": "Sophomore core courses: Data structures, OOP, web systems, and discrete math",
+    "targetSubjectsYearLevel": "2nd Year",
+    "isHighSchool": false
+  },
+  {
+    "id": "bsit-3",
+    "deptCode": "BSIT",
+    "deptName": "Bachelor of Science in Information Technology",
+    "yearLevelNum": 3,
+    "title": "3rd Year Level",
+    "subTitle": "Junior advanced courses: Database administration, networking, info assurance & security",
+    "targetSubjectsYearLevel": "3rd Year",
+    "isHighSchool": false
+  },
+  {
+    "id": "bsit-4",
+    "deptCode": "BSIT",
+    "deptName": "Bachelor of Science in Information Technology",
+    "yearLevelNum": 4,
+    "title": "4th Year Level",
+    "subTitle": "Senior capstone research, systems administration, and industry internship practicum",
+    "targetSubjectsYearLevel": "4th Year",
+    "isHighSchool": false
+  },
+  {
+    "id": "hs-11",
+    "deptCode": "HS",
+    "deptName": "High School Department",
+    "yearLevelNum": 3,
+    "title": "Grade 11 - STEM & TVL",
+    "subTitle": "Senior High School Grade 11 specialized academic tracks (Pre-Calculus & TVL-ICT)",
+    "targetSubjectsYearLevel": "Grade 11 (SHS)",
+    "isHighSchool": true
+  },
+  {
+    "id": "hs-12",
+    "deptCode": "HS",
+    "deptName": "High School Department",
+    "yearLevelNum": 4,
+    "title": "Grade 12 - STEM & TVL",
+    "subTitle": "Senior High School Grade 12 graduating projects and computer systems servicing NC II",
+    "targetSubjectsYearLevel": "Grade 12 (SHS)",
+    "isHighSchool": true
+  }
+]

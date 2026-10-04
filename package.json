@@ -6,20 +6,41 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed": "node scripts/seed-remote.mjs",
+    "seed:users": "node scripts/seed-users.mjs",
+    "verify:phase1": "node scripts/verify-phase1.mjs",
+    "verify:phase2": "node scripts/verify-phase2.mjs",
+    "verify:phase3": "node --experimental-strip-types scripts/verify-phase3.mjs",
+    "verify:phase4": "node --experimental-strip-types scripts/verify-phase4.mjs",
+    "verify:phase5": "node --experimental-strip-types scripts/verify-phase5.mjs",
+    "verify:phase6": "node --experimental-strip-types scripts/verify-phase6.mjs",
+    "verify:phase7": "node --experimental-strip-types scripts/verify-phase7.mjs",
+    "test": "node --experimental-strip-types --test src/lib/conflict-engine/__tests__/conflict-engine.test.mjs"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.2",
+    "bootstrap": "^5.3.8",
+    "bootstrap-icons": "^1.13.1",
+    "exceljs": "^4.4.0",
     "next": "16.3.6",
+    "pdfkit": "^0.20.2",
+    "qrcode": "^1.5.4",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pdfkit": "^0.17.6",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
+    "supabase": "^2.118.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
