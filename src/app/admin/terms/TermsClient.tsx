@@ -479,7 +479,7 @@ export function TermsClient({
                           ) : cat === 'high_school' ? (
                             <span className="pill-status pill-status-review">High School</span>
                           ) : (
-                            <span className="pill-status pill-status-archived">Non-BSIT / Minor</span>
+                            <span className="pill-status pill-status-archived">Minor</span>
                           )}
                         </td>
                         <td className="py-2.5 px-3 font-monospace text-muted">

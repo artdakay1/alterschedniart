@@ -6,19 +6,12 @@ import type {
   ScheduleEntryInput,
   ScheduleContext,
   Violation,
-  RoomInfo,
   SubjectInfo,
   InstructorInfo,
 } from '../types.ts';
 import {
-  timeToMinutes,
   getDayName,
 } from '../utils.ts';
-
-/**
- * Recommended maximum scheduled teaching hours for an instructor in a single day.
- */
-export const MAX_DAILY_HOURS = 6;
 
 /**
  * Evaluates all soft advisory rules against schedule entries and context.
@@ -29,45 +22,12 @@ export function checkSoftRules(
 ): Violation[] {
   const violations: Violation[] = [];
 
-  const roomsMap = new Map<string, RoomInfo>(context.rooms.map((r) => [r.id, r]));
   const subjectsMap = new Map<string, SubjectInfo>(context.subjects.map((s) => [s.id, s]));
   const instructorsMap = new Map<string, InstructorInfo>(
     context.instructors.map((i) => [i.id, i])
   );
 
-  // 1. LAB ROOM UNDERUSED (FYI Warning)
-  // Session in a laboratory room, subject does NOT require lab, and instructor.needsLabEquipment is false.
-  // Explicitly NOT a hard error — only an informational advisory that a lab is used as a standard room.
-  for (const entry of entries) {
-    const room = entry.roomId ? roomsMap.get(entry.roomId) : undefined;
-    const subject = subjectsMap.get(entry.subjectId);
-    const instructor = instructorsMap.get(entry.instructorId);
-
-    const isUnspecified = subject?.facilityType === 'unspecified';
-
-    if (
-      !isUnspecified &&
-      room?.roomType === 'laboratory' &&
-      subject &&
-      !subject.requiresLab &&
-      entry.sessionType !== 'lab' &&
-      instructor &&
-      !instructor.needsLabEquipment
-    ) {
-      const roomName = room.name || 'Laboratory';
-      const subjectCode = subject.code || 'Course';
-      const instName = instructor.name || 'Instructor';
-
-      violations.push({
-        severity: 'soft',
-        rule: 'lab_room_underused',
-        message: `FYI Notice: Class scheduled in laboratory "${roomName}" for non-lab subject "${subjectCode}", and ${instName} does not require specialized lab equipment. Permitted as standard classroom usage.`,
-        entryIds: [entry.id],
-      });
-    }
-  }
-
-  // 2. UNQUALIFIED INSTRUCTOR
+  // 1. UNQUALIFIED INSTRUCTOR
   // Instructor has no qualifications record for the subject
   for (const entry of entries) {
     const instructor = instructorsMap.get(entry.instructorId);
@@ -92,49 +52,9 @@ export function checkSoftRules(
     }
   }
 
-  // 3. HEAVY LOAD DAY
-  // Same instructor has more than MAX_DAILY_HOURS scheduled in one day
-  const instructorDayMinutes = new Map<
-    string,
-    { totalMinutes: number; entryIds: string[]; instructorId: string; dayOfWeek: number }
-  >();
-
-  for (const entry of entries) {
-    if (!entry.instructorId) continue;
-    const key = `${entry.dayOfWeek}:${entry.instructorId}`;
-    const record = instructorDayMinutes.get(key) || {
-      totalMinutes: 0,
-      entryIds: [],
-      instructorId: entry.instructorId,
-      dayOfWeek: entry.dayOfWeek,
-    };
-
-    const duration = timeToMinutes(entry.endTime) - timeToMinutes(entry.startTime);
-    record.totalMinutes += Math.max(0, duration);
-    record.entryIds.push(entry.id);
-    instructorDayMinutes.set(key, record);
-  }
-
-  const maxMinutes = MAX_DAILY_HOURS * 60;
-  for (const record of instructorDayMinutes.values()) {
-    if (record.totalMinutes > maxMinutes) {
-      const instructor = instructorsMap.get(record.instructorId);
-      const instName = instructor?.name || 'Instructor';
-      const dayName = getDayName(record.dayOfWeek);
-      const scheduledHours = (record.totalMinutes / 60).toFixed(1);
-
-      violations.push({
-        severity: 'soft',
-        rule: 'heavy_load_day',
-        message: `${instName} is assigned ${scheduledHours} hours of instruction on ${dayName}, exceeding the recommended limit of ${MAX_DAILY_HOURS} hours/day.`,
-        entryIds: record.entryIds,
-      });
-    }
-  }
-
-  // 4. IRREGULAR DAY PAIRING
-  // Warn (not block) if a lecture-type entry's day doesn't follow MW (1 & 3) or TTH (2 & 4) convention.
-  // Labs, electives, capstone, and Friday/Saturday sessions are exempt.
+  // 2. IRREGULAR DAY PAIRING
+  // Warn (not block) if a multi-session lecture course doesn't follow MW (1 & 3) or TTH (2 & 4) convention.
+  // Labs, electives, capstone, 2-unit/single-session courses, and Friday/Saturday sessions are exempt.
   const offeringLectureEntries = new Map<
     string,
     { subjectId: string; entries: ScheduleEntryInput[] }
@@ -147,6 +67,24 @@ export function checkSoftRules(
 
     const subject = subjectsMap.get(entry.subjectId);
     if (isElectiveOrCapstone(subject)) continue;
+
+    // Subjects with 1 or 2 units/hours are single continuous sessions and exempt from 2-day pairing
+    if (
+      subject &&
+      (subject.units === 2 ||
+        subject.units === 1 ||
+        (subject.lectureHours <= 2 && subject.lectureHours > 0) ||
+        /^(PE|PATHFIT|NSTP)/i.test(subject.code || ''))
+    ) {
+      continue;
+    }
+
+    const isHs =
+      (subject?.code || '').toUpperCase().startsWith('HS') ||
+      (subject?.code || '').toUpperCase().startsWith('JHS') ||
+      (subject?.code || '').toUpperCase().startsWith('SHS') ||
+      (subject?.code || '').toUpperCase().startsWith('GRADE');
+    if (isHs) continue;
 
     const offeringKey = entry.offeringId || `${entry.blockId}:${entry.subjectId}`;
     const record = offeringLectureEntries.get(offeringKey) || {

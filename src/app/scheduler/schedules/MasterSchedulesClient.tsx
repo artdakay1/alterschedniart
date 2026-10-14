@@ -145,9 +145,20 @@ export function MasterSchedulesClient({
         id: s.id,
         code: s.code,
         title: s.title,
+        units: s.units,
         requiresLab: s.requires_lab,
         lectureHours: s.lecture_hours,
         labHours: s.lab_hours,
+        facilityType:
+          (s as any).facility_type ||
+          (s as any).facilityType ||
+          (s.code.toUpperCase().includes('PE') ||
+          s.code.toUpperCase().includes('PATHFIT') ||
+          s.code.toUpperCase().includes('NSTP') ||
+          s.code.toUpperCase().includes('ROTC') ||
+          s.code.toUpperCase().includes('CWTS')
+            ? 'unspecified'
+            : undefined),
       })),
       instructors: instructors.map((i) => ({
         id: i.id,

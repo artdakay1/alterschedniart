@@ -11,6 +11,8 @@ import {
 } from '@/lib/validators/academic';
 import type { Instructor } from '@/types/database';
 
+import { saveInstructorDepartmentToConfig } from '@/lib/academic/instructor-departments';
+
 async function getCallerProfile() {
   const supabase = await createClient();
   const {
@@ -56,16 +58,45 @@ export async function updateInstructorAction(
 
   if (!before) throw new Error('Instructor record not found.');
 
-  const { error } = await supabase
+  // Save to local JSON config immediately
+  saveInstructorDepartmentToConfig(instructorId, data.department);
+
+  // Attempt update with department column
+  let { error } = await supabase
     .from('instructors')
     .update({
       employment_type: data.employment_type,
       needs_lab_equipment: data.needs_lab_equipment,
-    })
+      department: data.department,
+    } as any)
     .eq('id', instructorId);
+
+  // Fallback if department column is missing (error 42703)
+  if (error && (error as any).code === '42703') {
+    const fallbackRes = await supabase
+      .from('instructors')
+      .update({
+        employment_type: data.employment_type,
+        needs_lab_equipment: data.needs_lab_equipment,
+      })
+      .eq('id', instructorId);
+    error = fallbackRes.error;
+  }
 
   if (error) {
     throw new Error(`Failed to update instructor: ${error.message}`);
+  }
+
+  // If instructor has a profile_id and department is single, best-effort sync profile.department
+  if (before.profile_id && (data.department === 'BSIT' || data.department === 'High School')) {
+    try {
+      await supabase
+        .from('profiles')
+        .update({ department: data.department })
+        .eq('id', before.profile_id);
+    } catch {
+      // Ignore if column doesn't match
+    }
   }
 
   await supabase.from('audit_log').insert({

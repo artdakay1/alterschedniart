@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server';
 import { RoomsClient } from './RoomsClient';
 import type { Room } from '@/types/database';
 
+import { getRoomAllowedDepartments } from '@/lib/academic/room-departments';
+
 export const dynamic = 'force-dynamic';
 
 export default async function AdminRoomsPage() {
@@ -29,9 +31,14 @@ export default async function AdminRoomsPage() {
     );
   }
 
+  const enrichedRooms = (rooms || []).map((r) => ({
+    ...r,
+    allowed_departments: getRoomAllowedDepartments(r as any),
+  })) as Room[];
+
   return (
     <div className="space-y-4">
-      <RoomsClient rooms={(rooms || []) as Room[]} />
+      <RoomsClient rooms={enrichedRooms} />
     </div>
   );
 }

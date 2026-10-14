@@ -58,11 +58,11 @@ export async function sendEmailNotification(
         messageId: resJson.id,
         mode: 'resend',
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         success: false,
         mode: 'resend',
-        error: err.message,
+        error: err instanceof Error ? err.message : String(err),
       };
     }
   }

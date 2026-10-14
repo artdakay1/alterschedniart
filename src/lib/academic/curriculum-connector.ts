@@ -32,14 +32,14 @@ export function getCurriculumMetadataMap(): Record<string, SubjectMetaRecord> {
             order: 0,
           };
         } else if (val && typeof val === 'object') {
-          const v = val as any;
+          const v = val as Record<string, unknown>;
           parsed[key] = {
-            yearLevel: v.yearLevel || v.year_level || '1st Year',
+            yearLevel: (v.yearLevel as string) || (v.year_level as string) || '1st Year',
             semester: v.semester === '2nd Semester' ? '2nd Semester' : '1st Semester',
             facility:
               v.facility === 'unspecified'
                 ? 'unspecified'
-                : v.facility === 'lab' || v.requires_lab
+                : v.facility === 'lab' || Boolean(v.requires_lab)
                 ? 'lab'
                 : 'lecture',
             category:

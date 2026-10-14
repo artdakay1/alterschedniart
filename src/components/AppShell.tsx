@@ -3,6 +3,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { LogoutButton } from '@/components/LogoutButton';
 import { NotificationBell, type AppNotification } from '@/components/NotificationBell';
@@ -92,10 +93,13 @@ export function AppShell({
                   height: '38px',
                 }}
               >
-                <img
+                <Image
                   src="/images/altersched-logo.png"
                   alt="AlterSched Logo"
+                  width={38}
+                  height={38}
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                  priority
                 />
               </div>
               <div>
@@ -195,7 +199,7 @@ export function AppShell({
       {/* ========================================================================= */}
       {/* RIGHT MAIN CONTENT AREA                                                   */}
       {/* ========================================================================= */}
-      <div className="d-flex flex-column flex-grow-1 overflow-hidden">
+      <div className="d-flex flex-column flex-grow-1 min-w-0">
         {/* Topbar matching reference */}
         <header className="app-topbar">
           <div className="d-flex align-items-center gap-2 gap-md-3">
@@ -275,7 +279,7 @@ export function AppShell({
         </header>
 
         {/* Page Content Body */}
-        <main className="flex-grow-1">
+        <main className="flex-grow-1 min-w-0">
           {children}
         </main>
       </div>

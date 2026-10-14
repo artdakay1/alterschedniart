@@ -8,9 +8,10 @@ import {
   scheduleEntrySchema,
   type ScheduleEntryFormInput,
 } from '@/lib/validators/schedule';
-import type { ScheduleEntry } from '@/types/database';
+import type { ScheduleEntry, DepartmentType } from '@/types/database';
 import { generateTokensForPublishedVersion } from '@/lib/qr/token-service';
 import { ensureOfferingsForBlock } from '@/lib/academic/curriculum-connector';
+import { getRoomAllowedDepartments } from '@/lib/academic/room-departments';
 
 async function assertSchedulerOrAdminCaller() {
   const supabase = await createClient();
@@ -22,7 +23,7 @@ async function assertSchedulerOrAdminCaller() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, status')
+    .select('role, status, department, allowed_subjects')
     .eq('id', user.id)
     .single();
 
@@ -37,6 +38,19 @@ async function assertSchedulerOrAdminCaller() {
   }
 
   return { supabase, user, profile };
+}
+
+function isHighSchoolSubject(sub: { code?: string | null; title?: string | null }) {
+  const code = (sub.code || '').toUpperCase();
+  const title = (sub.title || '').toLowerCase();
+  return (
+    code.startsWith('HS') ||
+    code.startsWith('JHS') ||
+    code.startsWith('SHS') ||
+    code.startsWith('GRADE') ||
+    title.includes('high school') ||
+    title.includes('grade ')
+  );
 }
 
 /**
@@ -113,7 +127,7 @@ export async function saveScheduleEntryAction(
   entryId: string | null,
   rawInput: ScheduleEntryFormInput
 ) {
-  const { supabase, user } = await assertSchedulerOrAdminCaller();
+  const { supabase, user, profile } = await assertSchedulerOrAdminCaller();
 
   // Guard: Verify version is draft before modifying
   const { data: targetVersion } = await supabase
@@ -134,6 +148,69 @@ export async function saveScheduleEntryAction(
     throw new Error(parsed.error.issues[0]?.message || 'Invalid schedule entry data.');
   }
   const data = parsed.data;
+
+  // Department Scheduler Scope Guard: Schedulers can only set schedules for subjects in their scope
+  if (profile.role === 'scheduler') {
+    const userDept = user.user_metadata?.department;
+    const allowedIds = user.user_metadata?.allowed_subject_ids;
+
+    const { data: offeringRecord } = await supabase
+      .from('class_offerings')
+      .select('subject_id, subjects(is_bsit, code, title)')
+      .eq('id', data.offering_id)
+      .single();
+
+    if (offeringRecord) {
+      const subjectId = offeringRecord.subject_id;
+      const sub = offeringRecord.subjects as any;
+      let isPermitted = true;
+
+      if (allowedIds && Array.isArray(allowedIds) && allowedIds.length > 0) {
+        isPermitted = allowedIds.includes(subjectId);
+      } else if (userDept === 'BSIT') {
+        const code = (sub?.code || '').toUpperCase();
+        const isHS =
+          code.startsWith('HS') ||
+          code.startsWith('JHS') ||
+          code.startsWith('SHS') ||
+          code.startsWith('GRADE');
+        isPermitted = !isHS;
+      } else if (userDept === 'High School') {
+        const code = (sub?.code || '').toUpperCase();
+        const title = (sub?.title || '').toLowerCase();
+        isPermitted =
+          code.startsWith('HS') ||
+          code.startsWith('JHS') ||
+          code.startsWith('SHS') ||
+          code.startsWith('GRADE') ||
+          title.includes('high school') ||
+          title.includes('grade ');
+      }
+
+      if (!isPermitted) {
+        throw new Error(
+          `Unauthorized: Course "${sub?.code || 'Subject'}" is outside your department scheduler supervision scope.`
+        );
+      }
+    }
+
+    // Room Department Scope Guard: Schedulers can only schedule rooms permitted for their department
+    if (data.room_id && userDept) {
+      const { data: roomRecord } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('id', data.room_id)
+        .single();
+      if (roomRecord) {
+        const allowedDepts = getRoomAllowedDepartments(roomRecord as any);
+        if (!allowedDepts.includes(userDept as DepartmentType)) {
+          throw new Error(
+            `Unauthorized: Room "${roomRecord.name}" is not permitted for use by the ${userDept} department.`
+          );
+        }
+      }
+    }
+  }
 
   // Format times to HH:MM:SS
   const formattedStartTime =
@@ -229,7 +306,7 @@ export async function saveScheduleEntryAction(
  * Removes a schedule entry from the draft schedule version.
  */
 export async function deleteScheduleEntryAction(entryId: string) {
-  const { supabase, user } = await assertSchedulerOrAdminCaller();
+  const { supabase, user, profile } = await assertSchedulerOrAdminCaller();
 
   const { data: before } = await supabase
     .from('schedule_entries')
@@ -244,6 +321,52 @@ export async function deleteScheduleEntryAction(entryId: string) {
     throw new Error(
       `Cannot delete an entry from a ${verStatus} schedule version. Start a new draft to make adjustments.`
     );
+  }
+
+  // Department Scheduler Scope Guard
+  if (profile.role === 'scheduler') {
+    const userDept = user.user_metadata?.department;
+    const allowedIds = user.user_metadata?.allowed_subject_ids;
+
+    const { data: offeringRecord } = await supabase
+      .from('class_offerings')
+      .select('subject_id, subjects(is_bsit, code, title)')
+      .eq('id', before.offering_id)
+      .single();
+
+    if (offeringRecord) {
+      const subjectId = offeringRecord.subject_id;
+      const sub = offeringRecord.subjects as any;
+      let isPermitted = true;
+
+      if (allowedIds && Array.isArray(allowedIds) && allowedIds.length > 0) {
+        isPermitted = allowedIds.includes(subjectId);
+      } else if (userDept === 'BSIT') {
+        const code = (sub?.code || '').toUpperCase();
+        const isHS =
+          code.startsWith('HS') ||
+          code.startsWith('JHS') ||
+          code.startsWith('SHS') ||
+          code.startsWith('GRADE');
+        isPermitted = !isHS;
+      } else if (userDept === 'High School') {
+        const code = (sub?.code || '').toUpperCase();
+        const title = (sub?.title || '').toLowerCase();
+        isPermitted =
+          code.startsWith('HS') ||
+          code.startsWith('JHS') ||
+          code.startsWith('SHS') ||
+          code.startsWith('GRADE') ||
+          title.includes('high school') ||
+          title.includes('grade ');
+      }
+
+      if (!isPermitted) {
+        throw new Error(
+          `Unauthorized: Course "${sub?.code || 'Subject'}" is outside your department scheduler supervision scope.`
+        );
+      }
+    }
   }
 
   const { error } = await supabase
@@ -266,6 +389,188 @@ export async function deleteScheduleEntryAction(entryId: string) {
 
   revalidatePath('/scheduler/schedule');
   revalidatePath('/scheduler/schedules');
+}
+
+/**
+ * Clears schedule entries in the specified draft schedule version.
+ * If called by a department scheduler, only entries within their scope (department / allowed subjects) are cleared.
+ * Administrators can clear all entries in the version.
+ */
+export async function clearAllDraftScheduleEntriesAction(versionId: string) {
+  const { supabase, user, profile } = await assertSchedulerOrAdminCaller();
+
+  const { data: ver } = await supabase
+    .from('schedule_versions')
+    .select('id, status, version_number')
+    .eq('id', versionId)
+    .single();
+
+  if (!ver) throw new Error('Schedule version not found.');
+  if (ver.status !== 'draft') {
+    throw new Error(`Cannot clear a ${ver.status} schedule version. Only draft schedules can be cleared.`);
+  }
+
+  // Administrator role: clear all entries
+  if (profile.role === 'admin') {
+    const { count } = await supabase
+      .from('schedule_entries')
+      .select('*', { count: 'exact', head: true })
+      .eq('version_id', versionId);
+
+    const { error } = await supabase
+      .from('schedule_entries')
+      .delete()
+      .eq('version_id', versionId);
+
+    if (error) {
+      throw new Error(`Failed to clear schedule entries: ${error.message}`);
+    }
+
+    await supabase.from('audit_log').insert({
+      actor_id: user.id,
+      action: 'CLEAR_ALL_SCHEDULE_ENTRIES',
+      entity_type: 'schedule_versions',
+      entity_id: versionId,
+      before: { entriesCount: count || 0 },
+      after: { entriesCount: 0 },
+    });
+
+    revalidatePath('/scheduler/schedule');
+    revalidatePath('/scheduler/schedules');
+
+    return { success: true, clearedCount: count || 0 };
+  }
+
+  // Department Scheduler role: clear ONLY entries within the scheduler's scope
+  const userDept = (profile.department || user.user_metadata?.department || 'BSIT') as DepartmentType;
+  const allowedSubjectIds = (profile.allowed_subjects || user.user_metadata?.allowed_subject_ids || null) as string[] | null;
+
+  const { data: allEntries, error: fetchErr } = await supabase
+    .from('schedule_entries')
+    .select('id, offering_id, class_offerings(subject_id, subjects(code, title, is_bsit))')
+    .eq('version_id', versionId);
+
+  if (fetchErr) {
+    throw new Error(`Failed to query schedule entries: ${fetchErr.message}`);
+  }
+
+  const entriesToDelete = (allEntries || []).filter((e: any) => {
+    const offering = e.class_offerings;
+    if (!offering) return false;
+    const subjectId = offering.subject_id;
+    if (allowedSubjectIds && allowedSubjectIds.length > 0) {
+      return subjectId && allowedSubjectIds.includes(subjectId);
+    }
+    const sub = offering.subjects || { code: '', title: '' };
+    const isHs = isHighSchoolSubject(sub);
+    if (userDept === 'High School') return isHs;
+    if (userDept === 'BSIT') return !isHs;
+    return true;
+  });
+
+  if (entriesToDelete.length === 0) {
+    return { success: true, clearedCount: 0 };
+  }
+
+  const idsToDelete = entriesToDelete.map((e) => e.id);
+  const { error } = await supabase
+    .from('schedule_entries')
+    .delete()
+    .in('id', idsToDelete);
+
+  if (error) {
+    throw new Error(`Failed to clear scoped schedule entries: ${error.message}`);
+  }
+
+  await supabase.from('audit_log').insert({
+    actor_id: user.id,
+    action: 'CLEAR_SCOPED_SCHEDULE_ENTRIES',
+    entity_type: 'schedule_versions',
+    entity_id: versionId,
+    before: { scope: userDept, entriesCount: idsToDelete.length },
+    after: { scope: userDept, entriesCount: 0 },
+  });
+
+  revalidatePath('/scheduler/schedule');
+  revalidatePath('/scheduler/schedules');
+
+  return { success: true, clearedCount: idsToDelete.length };
+}
+
+/**
+ * Clears schedule entries for a specific block in the draft schedule version.
+ * If called by a scheduler, only entries for subjects within the scheduler's scope are cleared.
+ */
+export async function clearBlockDraftScheduleEntriesAction(versionId: string, blockId: string) {
+  const { supabase, user, profile } = await assertSchedulerOrAdminCaller();
+
+  const { data: ver } = await supabase
+    .from('schedule_versions')
+    .select('id, status, version_number')
+    .eq('id', versionId)
+    .single();
+
+  if (!ver) throw new Error('Schedule version not found.');
+  if (ver.status !== 'draft') {
+    throw new Error(`Cannot clear a ${ver.status} schedule version. Only draft schedules can be cleared.`);
+  }
+
+  // Find offering IDs belonging to this block
+  const { data: offerings } = await supabase
+    .from('class_offerings')
+    .select('id, subject_id, subjects(code, title, is_bsit)')
+    .eq('block_id', blockId);
+
+  let scopedOfferings = offerings || [];
+  if (profile.role === 'scheduler') {
+    const userDept = (profile.department || user.user_metadata?.department || 'BSIT') as DepartmentType;
+    const allowedSubjectIds = (profile.allowed_subjects || user.user_metadata?.allowed_subject_ids || null) as string[] | null;
+    scopedOfferings = scopedOfferings.filter((off: any) => {
+      if (allowedSubjectIds && allowedSubjectIds.length > 0) {
+        return allowedSubjectIds.includes(off.subject_id);
+      }
+      const sub = off.subjects || { code: '', title: '' };
+      const isHs = isHighSchoolSubject(sub);
+      if (userDept === 'High School') return isHs;
+      if (userDept === 'BSIT') return !isHs;
+      return true;
+    });
+  }
+
+  const offeringIds = scopedOfferings.map((o) => o.id);
+  if (offeringIds.length === 0) {
+    return { success: true, clearedCount: 0 };
+  }
+
+  const { count } = await supabase
+    .from('schedule_entries')
+    .select('*', { count: 'exact', head: true })
+    .eq('version_id', versionId)
+    .in('offering_id', offeringIds);
+
+  const { error } = await supabase
+    .from('schedule_entries')
+    .delete()
+    .eq('version_id', versionId)
+    .in('offering_id', offeringIds);
+
+  if (error) {
+    throw new Error(`Failed to clear block schedule entries: ${error.message}`);
+  }
+
+  await supabase.from('audit_log').insert({
+    actor_id: user.id,
+    action: 'CLEAR_BLOCK_SCHEDULE_ENTRIES',
+    entity_type: 'schedule_versions',
+    entity_id: versionId,
+    before: { blockId, entriesCount: count || 0 },
+    after: { blockId, entriesCount: 0 },
+  });
+
+  revalidatePath('/scheduler/schedule');
+  revalidatePath('/scheduler/schedules');
+
+  return { success: true, clearedCount: count || 0 };
 }
 
 /**

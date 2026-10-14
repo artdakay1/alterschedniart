@@ -70,7 +70,20 @@ export default async function AdminDashboardPage() {
   return (
     <div className="d-flex flex-column gap-4">
       {/* Top Action Controls Bar (No Page Title) */}
-      <div className="d-flex align-items-center justify-content-end gap-2.5">
+      <div className="d-flex align-items-center justify-content-end gap-2 flex-wrap">
+        <Link
+          href="/scheduler/generate"
+          prefetch={true}
+          className="btn text-white d-inline-flex align-items-center gap-1.5 px-3 py-2 rounded-3 fw-semibold shadow-sm"
+          style={{ backgroundColor: '#0E0AB8' }}
+        >
+          <i className="bi bi-magic" />
+          <span>Create Schedule</span>
+        </Link>
+        <Link href="/scheduler/schedule" prefetch={true} className="btn-ref-secondary">
+          <i className="bi bi-calendar3-range me-1.5" />
+          <span>Schedule Editor</span>
+        </Link>
         <Link href="/admin/terms" prefetch={true} className="btn-ref-secondary">
           <i className="bi bi-calendar-event me-1.5" />
           <span>Manage Terms</span>
@@ -119,7 +132,24 @@ export default async function AdminDashboardPage() {
             </div>
           </div>
 
-          <div className="d-flex align-items-center gap-2">
+          <div className="d-flex align-items-center gap-2 flex-wrap">
+            <Link
+              href="/scheduler/generate"
+              prefetch={true}
+              className="btn btn-sm text-white px-3 fw-semibold shadow-sm rounded-pill d-inline-flex align-items-center gap-1"
+              style={{ backgroundColor: '#0E0AB8' }}
+            >
+              <i className="bi bi-magic" />
+              <span>Create Schedule</span>
+            </Link>
+            <Link
+              href="/scheduler/schedule"
+              prefetch={true}
+              className="btn btn-sm btn-outline-primary rounded-pill px-3 fw-semibold d-inline-flex align-items-center gap-1"
+            >
+              <i className="bi bi-calendar3" />
+              <span>Open Schedule Editor</span>
+            </Link>
             <Link
               href="/admin/terms"
               prefetch={true}

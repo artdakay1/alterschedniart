@@ -184,6 +184,7 @@ export async function previewAlterationImpact(
         id: s.id,
         code: s.code,
         title: s.title,
+        units: s.units,
         requiresLab: s.requires_lab,
         facilityType: meta?.facility || (s.requires_lab ? 'lab' : 'lecture'),
         lectureHours: s.lecture_hours,

@@ -26,7 +26,11 @@ export default async function SchedulerLayout({
 
   const userProfile = profile as Profile | null;
 
-  if (!userProfile || userProfile.status !== 'active' || userProfile.role !== 'scheduler') {
+  if (
+    !userProfile ||
+    userProfile.status !== 'active' ||
+    (userProfile.role !== 'scheduler' && userProfile.role !== 'admin')
+  ) {
     redirect('/login');
   }
 
@@ -38,21 +42,38 @@ export default async function SchedulerLayout({
     .order('created_at', { ascending: false })
     .limit(20);
 
-  const navLinks = [
-    { label: 'Dashboard', href: '/scheduler', icon: 'bi-grid-fill' },
-    { label: 'Schedule Editor', href: '/scheduler/schedule', icon: 'bi-calendar3' },
-    { label: 'Published & Saved', href: '/scheduler/schedules', icon: 'bi-table' },
-    { label: 'Subjects', href: '/scheduler/subjects', icon: 'bi-book' },
-    { label: 'Alterations', href: '/scheduler/alterations', icon: 'bi-arrow-left-right' },
-    { label: 'QR Sheets', href: '/scheduler/qr-sheets', icon: 'bi-qr-code' },
-    { label: 'AI Generator', href: '/scheduler/generate', icon: 'bi-cpu' },
-    { label: 'Fixed Constraints', href: '/scheduler/constraints', icon: 'bi-lock' },
-  ];
+  const navLinks =
+    userProfile.role === 'admin'
+      ? [
+          { label: 'Dashboard', href: '/admin', icon: 'bi-grid-fill' },
+          { label: 'Schedule Editor', href: '/scheduler/schedule', icon: 'bi-calendar3' },
+          { label: 'Schedule Generator', href: '/scheduler/generate', icon: 'bi-cpu' },
+          { label: 'Published & Saved', href: '/scheduler/schedules', icon: 'bi-table' },
+          { label: 'Terms', href: '/admin/terms', icon: 'bi-calendar-range' },
+          { label: 'Programs & Blocks', href: '/admin/blocks', icon: 'bi-mortarboard' },
+          { label: 'Subjects', href: '/admin/subjects', icon: 'bi-book' },
+          { label: 'Rooms', href: '/admin/rooms', icon: 'bi-building' },
+          { label: 'Instructors', href: '/admin/instructors', icon: 'bi-people' },
+          { label: 'Constraints', href: '/admin/constraints', icon: 'bi-shield-check' },
+          { label: 'Alterations', href: '/admin/alterations', icon: 'bi-arrow-left-right' },
+          { label: 'QR Sheets', href: '/admin/qr-sheets', icon: 'bi-qr-code' },
+          { label: 'Users', href: '/admin/users', icon: 'bi-person-gear' },
+        ]
+      : [
+          { label: 'Dashboard', href: '/scheduler', icon: 'bi-grid-fill' },
+          { label: 'Schedule Editor', href: '/scheduler/schedule', icon: 'bi-calendar3' },
+          { label: 'Published & Saved', href: '/scheduler/schedules', icon: 'bi-table' },
+          { label: 'Subjects', href: '/scheduler/subjects', icon: 'bi-book' },
+          { label: 'Alterations', href: '/scheduler/alterations', icon: 'bi-arrow-left-right' },
+          { label: 'QR Sheets', href: '/scheduler/qr-sheets', icon: 'bi-qr-code' },
+          { label: 'Schedule Generator', href: '/scheduler/generate', icon: 'bi-cpu' },
+          { label: 'Fixed Constraints', href: '/scheduler/constraints', icon: 'bi-lock' },
+        ];
 
   return (
     <AppShell
-      role="scheduler"
-      userName={userProfile.full_name || 'Scheduler'}
+      role={userProfile.role}
+      userName={userProfile.full_name || (userProfile.role === 'admin' ? 'Administrator' : 'Scheduler')}
       userEmail={userProfile.email}
       links={navLinks}
       notifications={notifications || []}

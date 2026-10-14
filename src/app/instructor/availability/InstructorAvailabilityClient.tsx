@@ -9,12 +9,14 @@ import type { InstructorAvailabilitySlotInput } from '@/lib/validators/academic'
 interface InstructorAvailabilityClientProps {
   instructorId: string;
   instructorName: string;
+  employmentType?: 'full_time' | 'part_time';
   initialSlots: InstructorAvailabilitySlotInput[];
 }
 
 export function InstructorAvailabilityClient({
   instructorId,
   instructorName,
+  employmentType,
   initialSlots,
 }: InstructorAvailabilityClientProps) {
   const handleSave = async (slots: InstructorAvailabilitySlotInput[]) => {
@@ -27,6 +29,7 @@ export function InstructorAvailabilityClient({
       <AvailabilityEditor
         instructorId={instructorId}
         instructorName={instructorName}
+        employmentType={employmentType}
         initialSlots={initialSlots}
         onSave={handleSave}
       />

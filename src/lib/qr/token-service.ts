@@ -79,7 +79,7 @@ export async function generateTokensForPublishedVersion(
 
   const blockIdSet = new Set<string>();
   for (const e of entries || []) {
-    const bId = (e.class_offerings as any)?.block_id;
+    const bId = (e.class_offerings as unknown as { block_id?: string } | null)?.block_id;
     if (bId) blockIdSet.add(bId);
   }
 
@@ -184,8 +184,8 @@ export async function revokeQrToken(
       before: beforeToken,
       after: updated,
     });
-  } catch (auditErr: any) {
-    console.error('Failed to log QR token revocation to audit_log:', auditErr?.message);
+  } catch (auditErr: unknown) {
+    console.error('Failed to log QR token revocation to audit_log:', auditErr instanceof Error ? auditErr.message : String(auditErr));
   }
 
   return { success: true, revokedAt: now };
@@ -206,9 +206,9 @@ export async function getPublicScheduleByToken(
 
   // Try RPC first if available
   try {
-    const { data: rpcData, error: rpcErr } = await (supabase.rpc as any)(
-      'get_public_schedule_by_token',
-      { p_token: token }
+    const { data: rpcData, error: rpcErr } = await supabase.rpc(
+      'get_public_schedule_by_token' as never,
+      { p_token: token } as never
     );
 
     if (!rpcErr && rpcData && rpcData.status) {
@@ -297,16 +297,25 @@ export async function getPublicScheduleByToken(
     .order('day_of_week', { ascending: true })
     .order('start_time', { ascending: true });
 
-  const entries: PublicScheduleItem[] = (entriesData || []).map((e: any) => ({
+  const entries: PublicScheduleItem[] = ((entriesData || []) as unknown as Array<{
+    id: string;
+    day_of_week: number;
+    start_time: string;
+    end_time: string;
+    session_type?: 'lecture' | 'lab';
+    class_offerings?: { subjects?: { code?: string; title?: string } | null } | null;
+    rooms?: { name?: string; room_type?: string } | null;
+    instructors?: { full_name?: string } | null;
+  }>).map((e) => ({
     id: e.id,
     day_of_week: e.day_of_week,
     start_time: e.start_time,
     end_time: e.end_time,
-    session_type: e.session_type || 'lecture',
+    session_type: (e.session_type || 'lecture') as 'lecture' | 'lab',
     subject_code: e.class_offerings?.subjects?.code || 'N/A',
     subject_title: e.class_offerings?.subjects?.title || 'Class',
     room_name: e.rooms?.name || 'TBA',
-    room_type: e.rooms?.room_type,
+    room_type: e.rooms?.room_type as 'lecture' | 'laboratory' | undefined,
     instructor_name: e.instructors?.full_name || 'TBA',
   }));
 
@@ -362,7 +371,7 @@ export async function loadQrSheetData(
   const blockMap = new Map<string, Block & { programs?: Program | null }>();
   for (const o of offerings || []) {
     if (o.blocks && !blockMap.has(o.block_id)) {
-      blockMap.set(o.block_id, o.blocks as any);
+      blockMap.set(o.block_id, o.blocks as unknown as Block & { programs?: Program | null });
     }
   }
 
@@ -374,7 +383,7 @@ export async function loadQrSheetData(
 
   const countsByBlock = new Map<string, number>();
   for (const e of entries || []) {
-    const bId = (e.class_offerings as any)?.block_id;
+    const bId = (e.class_offerings as unknown as { block_id?: string } | null)?.block_id;
     if (bId) {
       countsByBlock.set(bId, (countsByBlock.get(bId) || 0) + 1);
     }

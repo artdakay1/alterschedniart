@@ -1,7 +1,7 @@
 // src/app/scheduler/schedule/ScheduleEditorClient.tsx
 'use client';
 
-import React, { useState, useMemo, useTransition } from 'react';
+import React, { useState, useMemo, useTransition, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type {
@@ -14,6 +14,7 @@ import type {
   ScheduleVersion,
   ScheduleEntry,
   FixedConstraint,
+  DepartmentType,
 } from '@/types/database';
 import { FormModal } from '@/components/FormModal';
 import {
@@ -24,6 +25,7 @@ import {
   timeToMinutes,
   formatTimeShort,
   isTimeRangeWithin,
+  timeRangesOverlap,
 } from '@/lib/conflict-engine';
 import {
   saveScheduleEntryAction,
@@ -38,11 +40,47 @@ import {
   deleteScheduleVersionAction,
   renameScheduleVersionAction,
   getScheduleVersionNamesAction,
+  clearAllDraftScheduleEntriesAction,
+  clearBlockDraftScheduleEntriesAction,
 } from './actions';
 import type { PublishValidationResult } from '@/lib/publish/publish-gate';
 import type { ScheduleEntryFormInput } from '@/lib/validators/schedule';
 import { generateAiDraftAction } from '../generate/actions';
 import { SpreadsheetScheduleView } from './SpreadsheetScheduleView';
+import { RadialTimePicker } from '@/components/RadialTimePicker';
+import { ScheduleEditorToolbar, type ZoomDensity } from './components/ScheduleEditorToolbar';
+import { WeeklyTimetableGrid } from './components/WeeklyTimetableGrid';
+
+function calculateEndTime(startTime24: string, durationMinutes: number): string {
+  if (!startTime24 || !startTime24.includes(':')) return '09:30';
+  const [sh, sm] = startTime24.split(':').map(Number);
+  const startMins = (sh || 0) * 60 + (sm || 0);
+  const endMins = Math.min(21 * 60, startMins + durationMinutes);
+  const eh = Math.floor(endMins / 60);
+  const em = endMins % 60;
+  return `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`;
+}
+
+function getSubjectSessionDurationMinutes(
+  sub: Subject | undefined,
+  sessionType: 'lecture' | 'lab',
+  pattern: 'single' | 'MW' | 'TTH'
+): number {
+  if (!sub) return 90;
+  if (sub.lecture_hours === 1.5 && sub.lab_hours === 1.5) {
+    return 90;
+  }
+  if (sessionType === 'lab') {
+    return Math.round((sub.lab_hours || 1.5) * 60);
+  }
+  if (pattern === 'MW' || pattern === 'TTH') {
+    if (sub.lecture_hours === 3) return 90;
+  }
+  if (sub.lecture_hours > 0) {
+    return Math.round(sub.lecture_hours * 60);
+  }
+  return Math.round((sub.units || 2) * 60);
+}
 
 interface ScheduleEditorClientProps {
   terms: AcademicTerm[];
@@ -65,6 +103,10 @@ interface ScheduleEditorClientProps {
   subjects: Subject[];
   fixedConstraints: FixedConstraint[];
   metadataMap?: Record<string, { facility?: 'lecture' | 'lab' | 'unspecified'; [key: string]: any }>;
+  userRole?: string;
+  schedulerDepartment?: string | null;
+  allowedSubjectIds?: string[];
+  initialShowMasterlist?: boolean;
 }
 
 const DAYS = [
@@ -121,6 +163,20 @@ export function formatBlockLabel(b?: {
 
 const HOUR_HEIGHT = 80;
 const GRID_START_MIN = 420; // 07:00
+
+function getSlotFromPointer(e: React.DragEvent): { slotHour: string; isHalfHour: boolean; startTime: string } | null {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const offsetY = Math.max(0, Math.min(rect.height - 1, e.clientY - rect.top));
+  const totalMinutesFromStart = Math.floor((offsetY / HOUR_HEIGHT) * 60);
+  const halfHourSteps = Math.floor(totalMinutesFromStart / 30);
+  const totalMinutes = GRID_START_MIN + halfHourSteps * 30;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const slotHour = `${String(hours).padStart(2, '0')}:00`;
+  const isHalfHour = minutes === 30;
+  const startTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  return { slotHour, isHalfHour, startTime };
+}
 
 function computeDayLayout(dayEntries: ScheduleEntry[]) {
   if (dayEntries.length === 0) return new Map<string, { colIndex: number; totalCols: number }>();
@@ -200,11 +256,56 @@ export function ScheduleEditorClient({
   subjects,
   fixedConstraints,
   metadataMap,
+  userRole = 'admin',
+  schedulerDepartment = null,
+  allowedSubjectIds = [],
+  initialShowMasterlist = false,
 }: ScheduleEditorClientProps) {
   const router = useRouter();
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(
     initialBlockId || null
   );
+
+  const isSubjectAllowed = useMemo(() => {
+    return (subjectId?: string | null): boolean => {
+      if (!subjectId) return true;
+      if (userRole === 'admin') return true;
+      if (allowedSubjectIds && allowedSubjectIds.length > 0) {
+        return allowedSubjectIds.includes(subjectId);
+      }
+      if (schedulerDepartment) {
+        const sub = subjects.find((s) => s.id === subjectId);
+        if (!sub) return true;
+        const code = (sub.code || '').toUpperCase();
+        const title = (sub.title || '').toLowerCase();
+        if (schedulerDepartment === 'BSIT') {
+          const isHS =
+            code.startsWith('HS') ||
+            code.startsWith('JHS') ||
+            code.startsWith('SHS') ||
+            code.startsWith('GRADE');
+          return !isHS;
+        }
+        if (schedulerDepartment === 'High School') {
+          return (
+            code.startsWith('HS') ||
+            code.startsWith('JHS') ||
+            code.startsWith('SHS') ||
+            code.startsWith('GRADE') ||
+            title.includes('high school') ||
+            title.includes('grade ')
+          );
+        }
+      }
+      return true;
+    };
+  }, [userRole, allowedSubjectIds, schedulerDepartment, subjects]);
+
+  const isSubjectUnspecified = (subjIdOrCode?: string | null): boolean => {
+    if (!subjIdOrCode || !metadataMap) return false;
+    const meta = metadataMap[subjIdOrCode] || metadataMap[subjIdOrCode.toUpperCase()];
+    return meta?.facility === 'unspecified';
+  };
 
   const selectedBlock = useMemo(
     () => (selectedBlockId ? blocks.find((b) => b.id === selectedBlockId) || null : null),
@@ -235,8 +336,19 @@ export function ScheduleEditorClient({
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [aiScope, setAiScope] = useState<'current' | 'all'>('current');
   const [aiPromptNotes, setAiPromptNotes] = useState('');
+  const [aiAllowSaturday, setAiAllowSaturday] = useState(false);
+  const [aiRefineScope, setAiRefineScope] = useState<'targeted' | 'whole_block'>('targeted');
+  const [collisionNotice, setCollisionNotice] = useState<{
+    message: string;
+    attemptedPrompt: string;
+  } | null>(null);
   const [scheduleDayPattern, setScheduleDayPattern] = useState<'single' | 'MW' | 'TTH'>('single');
   const [isAiDrafting, setIsAiDrafting] = useState(false);
+
+  const [isConfirmClearAllOpen, setIsConfirmClearAllOpen] = useState(false);
+  const [isClearingAll, setIsClearingAll] = useState(false);
+  const [isConfirmClearBlockOpen, setIsConfirmClearBlockOpen] = useState(false);
+  const [isClearingBlock, setIsClearingBlock] = useState(false);
 
   const isReadOnly = draftVersion.status !== 'draft';
 
@@ -249,6 +361,29 @@ export function ScheduleEditorClient({
   const [isNoRoom, setIsNoRoom] = useState(false);
   const [editingEntry, setEditingEntry] = useState<ScheduleEntry | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+
+  // Two-Session management for modal (e.g. 1.5h Lec + 1.5h Lab or MW/TTH paired sessions)
+  const [hasSecondSession, setHasSecondSession] = useState(false);
+  const [syncSessionsTime, setSyncSessionsTime] = useState(true);
+  const [secondEntry, setSecondEntry] = useState<ScheduleEntry | null>(null);
+  const [isSecondNoRoom, setIsSecondNoRoom] = useState(false);
+  const [session2Data, setSession2Data] = useState<{
+    instructor_id: string;
+    room_id: string;
+    day_of_week: number;
+    start_time: string;
+    end_time: string;
+    session_type: 'lecture' | 'lab';
+    notes: string;
+  }>({
+    instructor_id: '',
+    room_id: '',
+    day_of_week: 3,
+    start_time: '08:00',
+    end_time: '09:30',
+    session_type: 'lab',
+    notes: '',
+  });
   const [bannerNotice, setBannerNotice] = useState<{
     type: 'success' | 'error';
     message: string;
@@ -271,20 +406,62 @@ export function ScheduleEditorClient({
 
   // Drag and drop onto grid state
   const [draggingOfferingId, setDraggingOfferingId] = useState<string | null>(null);
+  const [draggingEntryId, setDraggingEntryId] = useState<string | null>(null);
+  const dragOccurredRef = useRef(false);
   const [dragOverSlot, setDragOverSlot] = useState<{
     dayIndex: number;
     slotHour: string;
     isHalfHour: boolean;
   } | null>(null);
 
-  // Multi-block room occupancy overlay state
-  const [showAllBlockSchedules, setShowAllBlockSchedules] = useState(true);
-  const [selectedGridRoomFilter, setSelectedGridRoomFilter] = useState<string>('all');
+  // Auto-scroll viewport when dragging near top or bottom edges
+  useEffect(() => {
+    if (!draggingOfferingId && !draggingEntryId) return;
+
+    let animId: number | null = null;
+    let scrollSpeed = 0;
+
+    const handleWindowDragOver = (e: DragEvent) => {
+      const edgeThreshold = 100; // pixels from top or bottom of viewport
+      const maxSpeed = 20;
+      const clientY = e.clientY;
+      const windowHeight = window.innerHeight;
+
+      if (clientY < edgeThreshold) {
+        const intensity = (edgeThreshold - Math.max(0, clientY)) / edgeThreshold;
+        scrollSpeed = -Math.round(intensity * maxSpeed);
+      } else if (clientY > windowHeight - edgeThreshold) {
+        const intensity = (Math.min(windowHeight, clientY) - (windowHeight - edgeThreshold)) / edgeThreshold;
+        scrollSpeed = Math.round(intensity * maxSpeed);
+      } else {
+        scrollSpeed = 0;
+      }
+    };
+
+    const scrollLoop = () => {
+      if (scrollSpeed !== 0) {
+        window.scrollBy({ top: scrollSpeed, behavior: 'instant' });
+      }
+      animId = requestAnimationFrame(scrollLoop);
+    };
+
+    window.addEventListener('dragover', handleWindowDragOver);
+    animId = requestAnimationFrame(scrollLoop);
+
+    return () => {
+      window.removeEventListener('dragover', handleWindowDragOver);
+      if (animId) cancelAnimationFrame(animId);
+    };
+  }, [draggingOfferingId, draggingEntryId]);
+
   const [spreadsheetShowAllBlocks, setSpreadsheetShowAllBlocks] = useState(false);
+  const [zoomDensity, setZoomDensity] = useState<ZoomDensity>('100%');
 
   // In-page Department Masterlist state
-  const [showMasterlist, setShowMasterlist] = useState(false);
-  const [masterlistDept, setMasterlistDept] = useState<'college' | 'high_school'>('college');
+  const [showMasterlist, setShowMasterlist] = useState(initialShowMasterlist);
+  const [masterlistDept, setMasterlistDept] = useState<'college' | 'high_school'>(
+    schedulerDepartment === 'High School' ? 'high_school' : 'college'
+  );
   const [masterlistViewStyle, setMasterlistViewStyle] = useState<'spreadsheet' | 'grid'>('spreadsheet');
   const [masterlistRoomFilter, setMasterlistRoomFilter] = useState<string>('all');
   const [masterlistBlockFilter, setMasterlistBlockFilter] = useState<string>('all');
@@ -350,14 +527,6 @@ export function ScheduleEditorClient({
     return list;
   }, [masterlistEntries, initialOfferings, masterlistBlockFilter, masterlistRoomFilter]);
 
-  // Entries from other blocks for room occupancy visualization
-  const otherBlockEntries = useMemo(() => {
-    if (!selectedBlockId) return [];
-    return entries.filter((e) => {
-      const off = initialOfferings.find((o) => o.id === e.offering_id);
-      return off && off.block_id !== selectedBlockId;
-    });
-  }, [entries, initialOfferings, selectedBlockId]);
 
   // Load version names from cache & database
   React.useEffect(() => {
@@ -431,13 +600,288 @@ export function ScheduleEditorClient({
 
   // Available offerings scoped to the active block or current entry
   const availableOfferings = useMemo(() => {
-    const list = blockOfferings.length > 0 ? blockOfferings : initialOfferings;
+    let list = blockOfferings.length > 0 ? blockOfferings : initialOfferings;
+    if (userRole !== 'admin') {
+      list = list.filter((o) => isSubjectAllowed(o.subject_id));
+    }
     if (formData.offering_id && !list.some((o) => o.id === formData.offering_id)) {
       const current = initialOfferings.find((o) => o.id === formData.offering_id);
       if (current) return [current, ...list];
     }
     return list;
-  }, [blockOfferings, initialOfferings, formData.offering_id]);
+  }, [blockOfferings, initialOfferings, formData.offering_id, userRole, isSubjectAllowed]);
+
+  // Available rooms scoped to the scheduler's department
+  const availableRooms = useMemo(() => {
+    if (userRole === 'admin') return rooms;
+    if (!schedulerDepartment) return rooms;
+    return rooms.filter((r) => {
+      const depts = r.allowed_departments || (r.is_shared ? ['BSIT', 'High School'] : ['BSIT']);
+      return depts.includes(schedulerDepartment as DepartmentType);
+    });
+  }, [rooms, userRole, schedulerDepartment]);
+
+  const isRoomAllowed = useMemo(() => {
+    return (roomId?: string | null): boolean => {
+      if (!roomId) return true;
+      if (userRole === 'admin') return true;
+      if (!schedulerDepartment) return true;
+      const targetRoom = rooms.find((r) => r.id === roomId);
+      if (!targetRoom) return true;
+      const depts = targetRoom.allowed_departments || (targetRoom.is_shared ? ['BSIT', 'High School'] : ['BSIT']);
+      return depts.includes(schedulerDepartment as DepartmentType);
+    };
+  }, [rooms, userRole, schedulerDepartment]);
+
+  // Structure for pre-drop conflict details
+  interface SlotConflictDetail {
+    type: 'lunch' | 'room' | 'instructor' | 'cohort';
+    message: string;
+    badge: string;
+  }
+
+  // Active dragged context (for real-time conflict heatmap & drop indicators)
+  const activeDragContext = useMemo(() => {
+    if (!draggingEntryId && !draggingOfferingId) return null;
+
+    let targetOfferingId: string | null = null;
+    let targetSubject: Subject | null = null;
+    let targetRoomId: string | null = null;
+    let targetInstructorId: string | null = null;
+    let durationHours = 1.5;
+    let blockId: string | null = null;
+    let entryIdToExclude: string | null = null;
+    let sessionType: 'lecture' | 'lab' = 'lecture';
+
+    if (draggingEntryId) {
+      entryIdToExclude = draggingEntryId;
+      const entry = entries.find((e) => e.id === draggingEntryId);
+      if (!entry) return null;
+      targetOfferingId = entry.offering_id;
+      const off = initialOfferings.find((o) => o.id === entry.offering_id);
+      targetSubject = subjects.find((s) => s.id === off?.subject_id) || null;
+      blockId = off?.block_id || selectedBlockId || null;
+      targetRoomId = entry.room_id || null;
+      targetInstructorId = entry.instructor_id || null;
+      sessionType = entry.session_type;
+      const durMins = Math.max(30, timeToMinutes(entry.end_time) - timeToMinutes(entry.start_time));
+      durationHours = durMins / 60;
+    } else if (draggingOfferingId) {
+      targetOfferingId = draggingOfferingId;
+      const off = initialOfferings.find((o) => o.id === draggingOfferingId);
+      targetSubject = subjects.find((s) => s.id === off?.subject_id) || null;
+      blockId = off?.block_id || selectedBlockId || null;
+
+      const existingForOffering = entries.filter((e) => e.offering_id === draggingOfferingId);
+      const hasLec = existingForOffering.some((e) => e.session_type === 'lecture');
+      const hasLab = existingForOffering.some((e) => e.session_type === 'lab');
+
+      if (targetSubject && targetSubject.lecture_hours > 0 && targetSubject.lab_hours > 0) {
+        if (!hasLec) {
+          sessionType = 'lecture';
+          durationHours = targetSubject.lecture_hours;
+        } else if (!hasLab) {
+          sessionType = 'lab';
+          durationHours = targetSubject.lab_hours;
+        } else {
+          sessionType = 'lecture';
+          durationHours = 1.5;
+        }
+      } else if (targetSubject && targetSubject.lecture_hours === 3 && targetSubject.lab_hours === 0) {
+        sessionType = 'lecture';
+        durationHours = 1.5;
+      } else {
+        sessionType = targetSubject?.requires_lab ? 'lab' : 'lecture';
+        durationHours = (targetSubject?.lecture_hours || 0) + (targetSubject?.lab_hours || 0) || 2;
+      }
+
+      const isUnspec = isSubjectUnspecified(targetSubject?.id) || isSubjectUnspecified(targetSubject?.code);
+      const preferredRoomId = (targetSubject as any)?.preferred_room_id;
+      if (!isUnspec) {
+        const targetRoom =
+          sessionType === 'lab'
+            ? availableRooms.find((r) => r.room_type === 'laboratory') || availableRooms[0] || rooms[0]
+            : (preferredRoomId ? availableRooms.find((r) => r.id === preferredRoomId) : null) ||
+              availableRooms.find((r) => r.room_type === 'lecture') ||
+              availableRooms[0] ||
+              rooms[0];
+        targetRoomId = targetRoom?.id || null;
+      }
+    }
+
+    const currentBlock = blocks.find((b) => b.id === blockId);
+    const blockLabel = formatBlockLabel(currentBlock);
+    const isHs =
+      blockLabel.toLowerCase().includes('grade') ||
+      blockLabel.toLowerCase().includes('high school') ||
+      blockLabel.toUpperCase().startsWith('HS');
+    const lunch = isHs ? { s: '12:00', e: '13:00' } : { s: '12:30', e: '13:00' };
+
+    const qualInsts = targetSubject
+      ? instructors.filter((inst) =>
+          (inst.instructor_qualifications || []).some((q) => q.subject_id === targetSubject?.id)
+        )
+      : [];
+
+    const room = targetRoomId ? rooms.find((r) => r.id === targetRoomId) || null : null;
+    const isRoomUnspec =
+      !targetRoomId ||
+      targetRoomId === '00000000-0000-0000-0000-000000000000' ||
+      room?.name === 'None (N/A)' ||
+      room?.name === 'TBA (N/A)';
+
+    return {
+      offeringId: targetOfferingId,
+      subject: targetSubject,
+      blockId,
+      blockLabel,
+      sessionType,
+      durationHours,
+      roomId: targetRoomId,
+      room,
+      isRoomUnspec,
+      instructorId: targetInstructorId,
+      qualInsts,
+      lunch,
+      entryIdToExclude,
+    };
+  }, [
+    draggingEntryId,
+    draggingOfferingId,
+    entries,
+    initialOfferings,
+    subjects,
+    rooms,
+    availableRooms,
+    instructors,
+    blocks,
+    selectedBlockId,
+    isSubjectUnspecified,
+  ]);
+
+  const activeDraggedRoom = useMemo(() => activeDragContext?.room || null, [activeDragContext]);
+
+  // Pure function to calculate all conflict details for a given day and start time
+  const getSlotConflicts = (dayIndex: number, slotStart: string): SlotConflictDetail[] => {
+    if (!activeDragContext) return [];
+
+    const {
+      subject,
+      blockId,
+      durationHours,
+      roomId,
+      room,
+      isRoomUnspec,
+      instructorId,
+      qualInsts,
+      lunch,
+      entryIdToExclude,
+    } = activeDragContext;
+
+    const [sh, sm] = slotStart.split(':').map(Number);
+    const startMins = sh * 60 + sm;
+    const endMins = Math.min(21 * 60, startMins + Math.round(durationHours * 60));
+    const eh = Math.floor(endMins / 60);
+    const em = endMins % 60;
+    const slotEnd = `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`;
+
+    const conflicts: SlotConflictDetail[] = [];
+
+    // 1. Lunch break conflict
+    if (timeRangesOverlap(slotStart, slotEnd, lunch.s, lunch.e)) {
+      conflicts.push({
+        type: 'lunch',
+        badge: 'Lunch Break',
+        message: `Overlaps lunch break (${lunch.s} - ${lunch.e})`,
+      });
+    }
+
+    // 2. Cohort / Student Block conflict
+    if (blockId) {
+      const cohortConflictEntry = entries.find(
+        (e) =>
+          e.id !== entryIdToExclude &&
+          e.day_of_week === dayIndex &&
+          initialOfferings.find((o) => o.id === e.offering_id)?.block_id === blockId &&
+          timeRangesOverlap(e.start_time, e.end_time, slotStart, slotEnd)
+      );
+      if (cohortConflictEntry) {
+        const cOff = initialOfferings.find((o) => o.id === cohortConflictEntry.offering_id);
+        const cSub = subjects.find((s) => s.id === cOff?.subject_id);
+        conflicts.push({
+          type: 'cohort',
+          badge: `Cohort busy (${cSub?.code || 'Class'})`,
+          message: `Cohort already scheduled for ${cSub?.code || 'class'} (${formatTimeShort(cohortConflictEntry.start_time)}-${formatTimeShort(cohortConflictEntry.end_time)})`,
+        });
+      }
+    }
+
+    // 3. Room conflict
+    if (!isRoomUnspec && roomId) {
+      const roomConflictEntry = entries.find(
+        (e) =>
+          e.id !== entryIdToExclude &&
+          e.day_of_week === dayIndex &&
+          e.room_id === roomId &&
+          timeRangesOverlap(e.start_time, e.end_time, slotStart, slotEnd)
+      );
+      if (roomConflictEntry) {
+        const rOff = initialOfferings.find((o) => o.id === roomConflictEntry.offering_id);
+        const rSub = subjects.find((s) => s.id === rOff?.subject_id);
+        const rBlock = blocks.find((b) => b.id === rOff?.block_id);
+        conflicts.push({
+          type: 'room',
+          badge: `Room taken (${room?.name})`,
+          message: `Room "${room?.name}" occupied by ${rBlock ? formatBlockLabel(rBlock) : 'another block'} (${rSub?.code || 'course'})`,
+        });
+      }
+    }
+
+    // 4. Instructor conflict
+    if (instructorId) {
+      const instConflictEntry = entries.find(
+        (e) =>
+          e.id !== entryIdToExclude &&
+          e.day_of_week === dayIndex &&
+          e.instructor_id === instructorId &&
+          timeRangesOverlap(e.start_time, e.end_time, slotStart, slotEnd)
+      );
+      if (instConflictEntry) {
+        const inst = instructors.find((i) => i.id === instructorId);
+        conflicts.push({
+          type: 'instructor',
+          badge: `Faculty busy (${inst?.full_name?.split(' ')[0] || 'Faculty'})`,
+          message: `Instructor ${inst?.full_name || 'assigned'} is already teaching another class`,
+        });
+      }
+    } else if (qualInsts.length > 0) {
+      const hasAvailableInst = qualInsts.some(
+        (inst) =>
+          !entries.some(
+            (e) =>
+              e.id !== entryIdToExclude &&
+              e.day_of_week === dayIndex &&
+              e.instructor_id === inst.id &&
+              timeRangesOverlap(e.start_time, e.end_time, slotStart, slotEnd)
+          )
+      );
+      if (!hasAvailableInst) {
+        conflicts.push({
+          type: 'instructor',
+          badge: `All faculty busy (${qualInsts.length})`,
+          message: `All qualified instructors (${qualInsts.map((i) => i.full_name).join(', ')}) are busy`,
+        });
+      }
+    } else if (subject) {
+      conflicts.push({
+        type: 'instructor',
+        badge: 'No qualified faculty',
+        message: `No instructors qualified for ${subject.code}`,
+      });
+    }
+
+    return conflicts;
+  };
 
   // Prepare pure context for the Conflict Engine
   const engineContext: ScheduleContext = useMemo(() => {
@@ -457,6 +901,7 @@ export function ScheduleEditorClient({
           id: s.id,
           code: s.code,
           title: s.title,
+          units: s.units,
           requiresLab: s.requires_lab,
           facilityType: meta?.facility || (s.requires_lab ? 'lab' : 'lecture'),
           lectureHours: s.lecture_hours,
@@ -566,12 +1011,36 @@ export function ScheduleEditorClient({
         }
         const scheduledHours = scheduledMinutes / 60;
         const remainingHours = Math.max(0, requiredHours - scheduledHours);
+
+        const hasLec = scheduledEntries.some((e) => e.session_type === 'lecture');
+        const hasLab = scheduledEntries.some((e) => e.session_type === 'lab');
+        let nextSessionType: 'lecture' | 'lab' | null = null;
+        let nextSessionDuration = 0;
+
+        if (sub && sub.lecture_hours > 0 && sub.lab_hours > 0) {
+          if (!hasLec) {
+            nextSessionType = 'lecture';
+            nextSessionDuration = sub.lecture_hours;
+          } else if (!hasLab) {
+            nextSessionType = 'lab';
+            nextSessionDuration = sub.lab_hours;
+          }
+        } else if (sub && sub.lecture_hours === 3 && sub.lab_hours === 0) {
+          nextSessionType = 'lecture';
+          nextSessionDuration = 1.5;
+        } else {
+          nextSessionType = sub?.requires_lab ? 'lab' : 'lecture';
+          nextSessionDuration = remainingHours;
+        }
+
         return {
           offering: off,
           subject: sub,
           requiredHours,
           scheduledHours,
           remainingHours,
+          nextSessionType,
+          nextSessionDuration,
         };
       })
       .filter((item) => item.remainingHours > 0);
@@ -586,6 +1055,17 @@ export function ScheduleEditorClient({
         message: 'This schedule version is published or archived (read-only). Direct additions are prohibited. Start a new draft to make revisions.',
       });
       return;
+    }
+
+    if (actualOfferingId) {
+      const targetOff = initialOfferings.find((o) => o.id === actualOfferingId);
+      if (!isSubjectAllowed(targetOff?.subject_id)) {
+        setBannerNotice({
+          type: 'error',
+          message: 'Unauthorized: This course is outside your department scheduler supervision scope.',
+        });
+        return;
+      }
     }
 
     let effectiveOfferings = blockOfferings;
@@ -610,26 +1090,154 @@ export function ScheduleEditorClient({
       (inst.instructor_qualifications || []).some((q) => q.subject_id === initialSub?.id)
     );
     const preferredRoomId = (initialSub as any)?.preferred_room_id;
-    const targetRoom = rooms.find((r) => r.id === preferredRoomId) || rooms[0];
+    const targetRoom =
+      (preferredRoomId ? availableRooms.find((r) => r.id === preferredRoomId) : null) ||
+      availableRooms[0] ||
+      rooms[0];
+    const targetLabRoom =
+      availableRooms.find((r) => r.room_type === 'laboratory') ||
+      targetRoom;
 
+    const isPairCourse =
+      (initialSub?.lecture_hours === 1.5 && initialSub?.lab_hours === 1.5) ||
+      initialSub?.lecture_hours === 3;
+    const initialPattern: 'single' | 'MW' | 'TTH' = isPairCourse ? 'MW' : 'single';
+    setScheduleDayPattern(initialPattern);
+
+    const has2 = Boolean(
+      (initialSub && initialSub.lecture_hours > 0 && initialSub.lab_hours > 0) ||
+      initialPattern !== 'single'
+    );
+    setHasSecondSession(has2);
+    setSyncSessionsTime(true);
     setEditingEntry(null);
+    setSecondEntry(null);
     setIsNoRoom(false);
-    setScheduleDayPattern('single');
+    setIsSecondNoRoom(false);
+
+    const dur1 = getSubjectSessionDurationMinutes(initialSub, 'lecture', initialPattern);
+    const dur2 = getSubjectSessionDurationMinutes(initialSub, initialSub?.requires_lab ? 'lab' : 'lecture', initialPattern);
+
     setFormData({
       offering_id: initialOff?.id || '',
       instructor_id: initialQualInsts[0]?.id || instructors[0]?.id || '',
       room_id: targetRoom?.id || rooms[0]?.id || '',
       day_of_week: 1,
       start_time: '08:00',
-      end_time: '10:00',
+      end_time: calculateEndTime('08:00', dur1),
+      session_type: 'lecture',
+      notes: '',
+    });
+
+    setSession2Data({
+      instructor_id: initialQualInsts[0]?.id || instructors[0]?.id || '',
+      room_id: (initialSub?.requires_lab ? targetLabRoom?.id : targetRoom?.id) || rooms[0]?.id || '',
+      day_of_week: 3,
+      start_time: '08:00',
+      end_time: calculateEndTime('08:00', dur2),
       session_type: initialSub?.requires_lab ? 'lab' : 'lecture',
       notes: '',
     });
+
     setModalError(null);
     setIsModalOpen(true);
   };
 
-  // Handle Drag-to-Grid Placement
+  // Day pattern change handler (Single Day, MW, TTH)
+  const handlePatternChange = (newPattern: 'single' | 'MW' | 'TTH') => {
+    setScheduleDayPattern(newPattern);
+    const curOff = initialOfferings.find((o) => o.id === formData.offering_id);
+    const curSub = subjects.find((s) => s.id === curOff?.subject_id);
+
+    const has2 = Boolean(
+      (curSub && curSub.lecture_hours > 0 && curSub.lab_hours > 0) ||
+      newPattern !== 'single'
+    );
+    setHasSecondSession(has2);
+
+    const dur1 = getSubjectSessionDurationMinutes(curSub, formData.session_type, newPattern);
+    const dur2 = getSubjectSessionDurationMinutes(curSub, session2Data.session_type, newPattern);
+
+    if (newPattern === 'MW') {
+      const s1Time = formData.start_time || '08:00';
+      setFormData((prev) => ({
+        ...prev,
+        day_of_week: 1, // Monday
+        end_time: calculateEndTime(s1Time, dur1),
+      }));
+      setSession2Data((prev) => ({
+        ...prev,
+        day_of_week: 3, // Wednesday
+        start_time: syncSessionsTime ? s1Time : prev.start_time,
+        end_time: calculateEndTime(syncSessionsTime ? s1Time : prev.start_time, dur2),
+      }));
+    } else if (newPattern === 'TTH') {
+      const s1Time = formData.start_time || '08:00';
+      setFormData((prev) => ({
+        ...prev,
+        day_of_week: 2, // Tuesday
+        end_time: calculateEndTime(s1Time, dur1),
+      }));
+      setSession2Data((prev) => ({
+        ...prev,
+        day_of_week: 4, // Thursday
+        start_time: syncSessionsTime ? s1Time : prev.start_time,
+        end_time: calculateEndTime(syncSessionsTime ? s1Time : prev.start_time, dur2),
+      }));
+    } else {
+      // Single Day
+      setFormData((prev) => ({
+        ...prev,
+        end_time: calculateEndTime(prev.start_time, dur1),
+      }));
+      if (has2) {
+        setSession2Data((prev) => ({
+          ...prev,
+          end_time: calculateEndTime(prev.start_time, dur2),
+        }));
+      }
+    }
+  };
+
+  // Radial start time change for Session 1 (with duration auto-calc)
+  const handleSession1StartChange = (newStart: string) => {
+    const curOff = initialOfferings.find((o) => o.id === formData.offering_id);
+    const curSub = subjects.find((s) => s.id === curOff?.subject_id);
+    const dur1 = getSubjectSessionDurationMinutes(curSub, formData.session_type, scheduleDayPattern);
+    const newEnd1 = calculateEndTime(newStart, dur1);
+
+    setFormData((prev) => ({
+      ...prev,
+      start_time: newStart,
+      end_time: newEnd1,
+    }));
+
+    if (hasSecondSession && syncSessionsTime) {
+      const dur2 = getSubjectSessionDurationMinutes(curSub, session2Data.session_type, scheduleDayPattern);
+      const newEnd2 = calculateEndTime(newStart, dur2);
+      setSession2Data((prev) => ({
+        ...prev,
+        start_time: newStart,
+        end_time: newEnd2,
+      }));
+    }
+  };
+
+  // Radial start time change for Session 2 (with duration auto-calc)
+  const handleSession2StartChange = (newStart: string) => {
+    const curOff = initialOfferings.find((o) => o.id === formData.offering_id);
+    const curSub = subjects.find((s) => s.id === curOff?.subject_id);
+    const dur2 = getSubjectSessionDurationMinutes(curSub, session2Data.session_type, scheduleDayPattern);
+    const newEnd2 = calculateEndTime(newStart, dur2);
+
+    setSession2Data((prev) => ({
+      ...prev,
+      start_time: newStart,
+      end_time: newEnd2,
+    }));
+  };
+
+  // Handle Drag-to-Grid Placement (Direct placement without modal popup)
   const handleDropOnGrid = (offeringId: string, dayOfWeek: number, startTime: string) => {
     if (isReadOnly) {
       setBannerNotice({
@@ -640,15 +1248,67 @@ export function ScheduleEditorClient({
     }
 
     const off = initialOfferings.find((o) => o.id === offeringId);
-    const sub = subjects.find((s) => s.id === off?.subject_id);
-    const qualInsts = instructors.filter((inst) =>
-      (inst.instructor_qualifications || []).some((q) => q.subject_id === sub?.id)
-    );
+    if (!off) return;
+    if (!isSubjectAllowed(off.subject_id)) {
+      setBannerNotice({
+        type: 'error',
+        message: 'Unauthorized: This course is outside your department scheduler supervision scope.',
+      });
+      return;
+    }
 
+    const sub = subjects.find((s) => s.id === off.subject_id);
+    const dayObj = DAYS.find((d) => d.index === dayOfWeek);
+
+    const existingForOffering = entries.filter((e) => e.offering_id === offeringId);
+    const hasLec = existingForOffering.some((e) => e.session_type === 'lecture');
+    const hasLab = existingForOffering.some((e) => e.session_type === 'lab');
+
+    let sessionTypeToPlace: 'lecture' | 'lab' = 'lecture';
+    let durationHours = 1.5;
+
+    if (sub && sub.lecture_hours > 0 && sub.lab_hours > 0) {
+      if (!hasLec) {
+        sessionTypeToPlace = 'lecture';
+        durationHours = sub.lecture_hours;
+      } else if (!hasLab) {
+        sessionTypeToPlace = 'lab';
+        durationHours = sub.lab_hours;
+      } else {
+        setBannerNotice({
+          type: 'error',
+          message: `${sub.code} is already fully placed (Lecture & Lab sessions assigned).`,
+        });
+        return;
+      }
+    } else if (sub && sub.lecture_hours === 3 && sub.lab_hours === 0) {
+      sessionTypeToPlace = 'lecture';
+      durationHours = 1.5; // Each session of pure 3h lecture is 1.5 hours
+      if (existingForOffering.length >= 2) {
+        setBannerNotice({
+          type: 'error',
+          message: `${sub.code} already has both 1.5-hour lecture sessions scheduled.`,
+        });
+        return;
+      }
+    } else {
+      sessionTypeToPlace = sub?.requires_lab ? 'lab' : 'lecture';
+      durationHours = (sub?.lecture_hours || 0) + (sub?.lab_hours || 0) || 2;
+    }
+
+    const isUnspec = isSubjectUnspecified(sub?.id) || isSubjectUnspecified(sub?.code);
+    const naRoomId = '00000000-0000-0000-0000-000000000000';
     const preferredRoomId = (sub as any)?.preferred_room_id;
-    const targetRoom = rooms.find((r) => r.id === preferredRoomId) || rooms[0];
 
-    const durationHours = (sub?.lecture_hours || 0) + (sub?.lab_hours || 0) || 2;
+    const targetRoom =
+      sessionTypeToPlace === 'lab'
+        ? availableRooms.find((r) => r.room_type === 'laboratory') || availableRooms[0] || rooms[0]
+        : (preferredRoomId ? availableRooms.find((r) => r.id === preferredRoomId) : null) ||
+          availableRooms.find((r) => r.room_type === 'lecture') ||
+          availableRooms[0] ||
+          rooms[0];
+    const roomIdToUse = isUnspec ? naRoomId : (targetRoom?.id || naRoomId);
+
     const [sh, sm] = startTime.split(':').map(Number);
     const startMins = sh * 60 + sm;
     const endMins = Math.min(21 * 60, startMins + Math.round(durationHours * 60));
@@ -656,21 +1316,333 @@ export function ScheduleEditorClient({
     const em = endMins % 60;
     const endTime = `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`;
 
-    setEditingEntry(null);
-    setIsNoRoom(false);
-    setScheduleDayPattern('single');
-    setFormData({
+    // Lunch break overlap validation
+    const currentBlock = blocks.find((b) => b.id === (selectedBlockId || off.block_id));
+    const blockLabel = formatBlockLabel(currentBlock);
+    const isHs =
+      blockLabel.toLowerCase().includes('grade') ||
+      blockLabel.toLowerCase().includes('high school') ||
+      blockLabel.toUpperCase().startsWith('HS');
+    const lunch = isHs ? { s: '12:00', e: '13:00' } : { s: '12:30', e: '13:00' };
+    if (timeRangesOverlap(startTime, endTime, lunch.s, lunch.e)) {
+      setBannerNotice({
+        type: 'error',
+        message: `Cannot place ${sub?.code || 'course'}: Overlaps with lunch break (${lunch.s} - ${lunch.e}).`,
+      });
+      return;
+    }
+
+    // Student block collision validation
+    const blockOccupied = entries.some(
+      (e) =>
+        initialOfferings.find((o) => o.id === e.offering_id)?.block_id === off.block_id &&
+        e.day_of_week === dayOfWeek &&
+        timeRangesOverlap(e.start_time, e.end_time, startTime, endTime)
+    );
+    if (blockOccupied) {
+      setBannerNotice({
+        type: 'error',
+        message: `Cannot place ${sub?.code || 'course'}: Cohort already has a class scheduled on ${dayObj?.name || 'this day'} from ${startTime} to ${endTime}.`,
+      });
+      return;
+    }
+
+    // Room collision validation (for non-unspecified room)
+    let roomOccupied = false;
+    let occupiedRoomName = '';
+    if (!isUnspec && roomIdToUse !== naRoomId) {
+      roomOccupied = entries.some(
+        (e) =>
+          e.day_of_week === dayOfWeek &&
+          e.room_id === roomIdToUse &&
+          timeRangesOverlap(e.start_time, e.end_time, startTime, endTime)
+      );
+      if (roomOccupied) {
+        const r = rooms.find((rm) => rm.id === roomIdToUse);
+        occupiedRoomName = r?.name || 'Assigned Room';
+      }
+    }
+
+    // Instructor qualification & availability
+    const qualInsts = instructors.filter((inst) =>
+      (inst.instructor_qualifications || []).some((q) => q.subject_id === sub?.id)
+    );
+
+    const availableInst = qualInsts.find(
+      (inst) =>
+        !entries.some(
+          (e) =>
+            e.day_of_week === dayOfWeek &&
+            e.instructor_id === inst.id &&
+            timeRangesOverlap(e.start_time, e.end_time, startTime, endTime)
+        )
+    );
+
+    // If room or instructor is conflicted, pop up the edit/add entry modal to allow selecting an alternative
+    if (roomOccupied || !availableInst || qualInsts.length === 0) {
+      const conflictParts: string[] = [];
+      if (roomOccupied) {
+        conflictParts.push(`Room "${occupiedRoomName}" is already occupied on ${dayObj?.name || 'this day'} from ${startTime} to ${endTime}.`);
+      }
+      if (qualInsts.length === 0) {
+        conflictParts.push(`No instructors are currently qualified to teach ${sub?.code || 'this course'}.`);
+      } else if (!availableInst) {
+        conflictParts.push(`All qualified instructors are already occupied at that time.`);
+      }
+
+      const conflictMsg = `Conflict detected: ${conflictParts.join(' ')} Please select an alternative room or instructor.`;
+
+      // Find an available alternative room if possible
+      const altRoom = availableRooms.find(
+        (r) =>
+          r.id !== naRoomId &&
+          (sessionTypeToPlace === 'lab' ? r.room_type === 'laboratory' : true) &&
+          !entries.some(
+            (e) =>
+              e.day_of_week === dayOfWeek &&
+              e.room_id === r.id &&
+              timeRangesOverlap(e.start_time, e.end_time, startTime, endTime)
+          )
+      );
+
+      setEditingEntry(null);
+      setSecondEntry(null);
+      setHasSecondSession(false);
+      setScheduleDayPattern('single');
+      setIsNoRoom(isUnspec);
+      setIsSecondNoRoom(false);
+
+      setFormData({
+        offering_id: offeringId,
+        instructor_id: availableInst?.id || qualInsts[0]?.id || instructors[0]?.id || '',
+        room_id: isUnspec ? naRoomId : (roomOccupied && altRoom ? altRoom.id : roomIdToUse),
+        day_of_week: dayOfWeek,
+        start_time: startTime,
+        end_time: endTime,
+        session_type: sessionTypeToPlace,
+        notes: '',
+      });
+
+      setModalError(conflictMsg);
+      setIsModalOpen(true);
+      return;
+    }
+
+    const payload: ScheduleEntryFormInput = {
       offering_id: offeringId,
-      instructor_id: qualInsts[0]?.id || instructors[0]?.id || '',
-      room_id: targetRoom?.id || rooms[0]?.id || '',
+      instructor_id: availableInst.id,
+      room_id: roomIdToUse,
       day_of_week: dayOfWeek,
       start_time: startTime,
       end_time: endTime,
-      session_type: sub?.requires_lab ? 'lab' : 'lecture',
-      notes: '',
+      session_type: sessionTypeToPlace,
+      notes: null,
+    };
+
+    startTransition(async () => {
+      try {
+        await saveScheduleEntryAction(draftVersion.id, null, payload);
+        const sessionLabel = sessionTypeToPlace === 'lab' ? 'Lab' : 'Lecture';
+        setBannerNotice({
+          type: 'success',
+          message: `Placed ${sub?.code || 'course'} ${sessionLabel} (${durationHours}h) on ${dayObj?.name || 'day'} at ${startTime} - ${endTime}.`,
+        });
+      } catch (err: unknown) {
+        setBannerNotice({
+          type: 'error',
+          message: err instanceof Error ? err.message : 'Failed to place schedule entry.',
+        });
+      }
     });
-    setModalError(null);
-    setIsModalOpen(true);
+  };
+
+  // Handle Drag-and-Drop Move of Existing Placed Entry on Grid
+  const handleMoveEntryOnGrid = (entryId: string, dayOfWeek: number, startTime: string) => {
+    if (isReadOnly) {
+      setBannerNotice({
+        type: 'error',
+        message: 'This schedule version is published or archived (read-only). Direct edits are prohibited.',
+      });
+      return;
+    }
+
+    const entry = entries.find((e) => e.id === entryId);
+    if (!entry) return;
+
+    const off = initialOfferings.find((o) => o.id === entry.offering_id) || (entry as any).class_offerings;
+    if (!off) return;
+    if (!isSubjectAllowed(off.subject_id)) {
+      setBannerNotice({
+        type: 'error',
+        message: 'Unauthorized: This course is outside your department scheduler supervision scope.',
+      });
+      return;
+    }
+
+    const sub = subjects.find((s) => s.id === off.subject_id) || (off as any).subjects;
+    const dayObj = DAYS.find((d) => d.index === dayOfWeek);
+    const durMins = Math.max(30, timeToMinutes(entry.end_time) - timeToMinutes(entry.start_time));
+    const [sh, sm] = startTime.split(':').map(Number);
+    const startMins = sh * 60 + sm;
+    const endMins = Math.min(21 * 60, startMins + durMins);
+    const eh = Math.floor(endMins / 60);
+    const em = endMins % 60;
+    const endTime = `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`;
+
+    // Lunch break overlap validation
+    const currentBlock = blocks.find((b) => b.id === (selectedBlockId || off.block_id));
+    const blockLabel = formatBlockLabel(currentBlock);
+    const isHs =
+      blockLabel.toLowerCase().includes('grade') ||
+      blockLabel.toLowerCase().includes('high school') ||
+      blockLabel.toUpperCase().startsWith('HS');
+    const lunch = isHs ? { s: '12:00', e: '13:00' } : { s: '12:30', e: '13:00' };
+    if (timeRangesOverlap(startTime, endTime, lunch.s, lunch.e)) {
+      setBannerNotice({
+        type: 'error',
+        message: `Cannot move ${sub?.code || 'class'}: Overlaps with lunch break (${lunch.s} - ${lunch.e}).`,
+      });
+      return;
+    }
+
+    // Student block collision check (excluding this entry)
+    const blockOccupied = entries.some(
+      (e) =>
+        e.id !== entry.id &&
+        initialOfferings.find((o) => o.id === e.offering_id)?.block_id === off.block_id &&
+        e.day_of_week === dayOfWeek &&
+        timeRangesOverlap(e.start_time, e.end_time, startTime, endTime)
+    );
+    if (blockOccupied) {
+      setBannerNotice({
+        type: 'error',
+        message: `Cannot move ${sub?.code || 'class'}: Cohort already has a class scheduled on ${dayObj?.name || 'this day'} from ${startTime} to ${endTime}.`,
+      });
+      return;
+    }
+
+    // Room conflict check (excluding this entry)
+    let roomOccupied = false;
+    let occupiedRoomName = '';
+    if (entry.room_id && entry.room_id !== '00000000-0000-0000-0000-000000000000') {
+      roomOccupied = entries.some(
+        (e) =>
+          e.id !== entry.id &&
+          e.day_of_week === dayOfWeek &&
+          e.room_id === entry.room_id &&
+          timeRangesOverlap(e.start_time, e.end_time, startTime, endTime)
+      );
+      if (roomOccupied) {
+        const r = rooms.find((rm) => rm.id === entry.room_id);
+        occupiedRoomName = r?.name || 'Assigned Room';
+      }
+    }
+
+    // Instructor conflict check (excluding this entry)
+    let instOccupied = false;
+    let occupiedInstName = '';
+    if (entry.instructor_id) {
+      instOccupied = entries.some(
+        (e) =>
+          e.id !== entry.id &&
+          e.day_of_week === dayOfWeek &&
+          e.instructor_id === entry.instructor_id &&
+          timeRangesOverlap(e.start_time, e.end_time, startTime, endTime)
+      );
+      if (instOccupied) {
+        const inst = instructors.find((i) => i.id === entry.instructor_id);
+        occupiedInstName = inst?.full_name || 'Assigned Instructor';
+      }
+    }
+
+    // If room or instructor is conflicted when moving, pop up the Edit Class Schedule Entry modal
+    if (roomOccupied || instOccupied) {
+      const conflictParts: string[] = [];
+      if (roomOccupied) {
+        conflictParts.push(`Room "${occupiedRoomName}" is already occupied on ${dayObj?.name || 'this day'} from ${startTime} to ${endTime}.`);
+      }
+      if (instOccupied) {
+        conflictParts.push(`Instructor "${occupiedInstName}" is already teaching another class at that time.`);
+      }
+      const conflictMsg = `Conflict detected: ${conflictParts.join(' ')} Please select an alternative room or instructor.`;
+
+      // Find an available alternative room if possible
+      const altRoom = availableRooms.find(
+        (r) =>
+          r.id !== '00000000-0000-0000-0000-000000000000' &&
+          (entry.session_type === 'lab' ? r.room_type === 'laboratory' : true) &&
+          !entries.some(
+            (e) =>
+              e.id !== entry.id &&
+              e.day_of_week === dayOfWeek &&
+              e.room_id === r.id &&
+              timeRangesOverlap(e.start_time, e.end_time, startTime, endTime)
+          )
+      );
+
+      // Find an available qualified instructor if possible
+      const qualInsts = instructors.filter((inst) =>
+        (inst.instructor_qualifications || []).some((q) => q.subject_id === sub?.id)
+      );
+      const altInst = qualInsts.find(
+        (inst) =>
+          !entries.some(
+            (e) =>
+              e.id !== entry.id &&
+              e.day_of_week === dayOfWeek &&
+              e.instructor_id === inst.id &&
+              timeRangesOverlap(e.start_time, e.end_time, startTime, endTime)
+          )
+      );
+
+      setEditingEntry(entry);
+      setSecondEntry(null);
+      setHasSecondSession(false);
+      setScheduleDayPattern('single');
+      setIsNoRoom(!entry.room_id || entry.room_id === '00000000-0000-0000-0000-000000000000');
+      setIsSecondNoRoom(false);
+
+      setFormData({
+        offering_id: entry.offering_id,
+        instructor_id: (instOccupied && altInst ? altInst.id : entry.instructor_id) || '',
+        room_id: (roomOccupied && altRoom ? altRoom.id : entry.room_id) || '',
+        day_of_week: dayOfWeek,
+        start_time: startTime,
+        end_time: endTime,
+        session_type: entry.session_type,
+        notes: (entry as any).notes || '',
+      });
+
+      setModalError(conflictMsg);
+      setIsModalOpen(true);
+      return;
+    }
+
+    const payload: ScheduleEntryFormInput = {
+      offering_id: entry.offering_id,
+      instructor_id: entry.instructor_id,
+      room_id: entry.room_id || '00000000-0000-0000-0000-000000000000',
+      day_of_week: dayOfWeek,
+      start_time: startTime,
+      end_time: endTime,
+      session_type: entry.session_type,
+      notes: (entry as any).notes || null,
+    };
+
+    startTransition(async () => {
+      try {
+        await saveScheduleEntryAction(draftVersion.id, entry.id, payload);
+        setBannerNotice({
+          type: 'success',
+          message: `Moved ${sub?.code || 'class'} to ${dayObj?.name || 'day'} at ${startTime} - ${endTime}.`,
+        });
+      } catch (err: unknown) {
+        setBannerNotice({
+          type: 'error',
+          message: err instanceof Error ? err.message : 'Failed to reschedule entry.',
+        });
+      }
+    });
   };
 
   // Open Edit Modal
@@ -683,19 +1655,101 @@ export function ScheduleEditorClient({
       return;
     }
 
-    setEditingEntry(entry);
-    setIsNoRoom(!entry.room_id);
-    setScheduleDayPattern('single');
+    const off = initialOfferings.find((o) => o.id === entry.offering_id);
+    if (!isSubjectAllowed(off?.subject_id)) {
+      setBannerNotice({
+        type: 'error',
+        message: 'Unauthorized: This course is outside your department scheduler supervision scope.',
+      });
+      return;
+    }
+
+    const sub = subjects.find((s) => s.id === off?.subject_id);
+
+    // Look for counterpart entry of the same offering in this schedule version
+    const counterpart = entries.find((e) => e.offering_id === entry.offering_id && e.id !== entry.id);
+
+    let initialPattern: 'single' | 'MW' | 'TTH' = 'single';
+    if (counterpart) {
+      const days = [entry.day_of_week, counterpart.day_of_week].sort();
+      if (days[0] === 1 && days[1] === 3) initialPattern = 'MW';
+      else if (days[0] === 2 && days[1] === 4) initialPattern = 'TTH';
+    } else {
+      if (entry.day_of_week === 1 || entry.day_of_week === 3) initialPattern = 'MW';
+      else if (entry.day_of_week === 2 || entry.day_of_week === 4) initialPattern = 'TTH';
+    }
+
+    setScheduleDayPattern(initialPattern);
+
+    const has2 = Boolean(
+      counterpart ||
+      (sub && sub.lecture_hours > 0 && sub.lab_hours > 0) ||
+      initialPattern !== 'single'
+    );
+    setHasSecondSession(has2);
+    setSyncSessionsTime(true);
+
+    let s1Entry = entry;
+    let s2Entry = counterpart;
+
+    if (counterpart) {
+      if (
+        (entry.session_type === 'lab' && counterpart.session_type === 'lecture') ||
+        entry.day_of_week > counterpart.day_of_week
+      ) {
+        s1Entry = counterpart;
+        s2Entry = entry;
+      }
+    }
+
+    setEditingEntry(s1Entry);
+    setSecondEntry(s2Entry || null);
+    setIsNoRoom(!s1Entry.room_id);
+    setIsSecondNoRoom(s2Entry ? !s2Entry.room_id : false);
+
+    const s1Start = s1Entry.start_time.slice(0, 5);
+    const dur1 = getSubjectSessionDurationMinutes(sub, s1Entry.session_type, initialPattern);
+    const s1End = s1Entry.end_time.slice(0, 5) || calculateEndTime(s1Start, dur1);
+
     setFormData({
-      offering_id: entry.offering_id,
-      instructor_id: entry.instructor_id,
-      room_id: entry.room_id || '',
-      day_of_week: entry.day_of_week,
-      start_time: entry.start_time.slice(0, 5),
-      end_time: entry.end_time.slice(0, 5),
-      session_type: entry.session_type,
-      notes: (entry as any).notes || '',
+      offering_id: s1Entry.offering_id,
+      instructor_id: s1Entry.instructor_id,
+      room_id: s1Entry.room_id || '',
+      day_of_week: s1Entry.day_of_week,
+      start_time: s1Start,
+      end_time: s1End,
+      session_type: s1Entry.session_type,
+      notes: (s1Entry as any).notes || '',
     });
+
+    if (s2Entry) {
+      const s2Start = s2Entry.start_time.slice(0, 5);
+      const dur2 = getSubjectSessionDurationMinutes(sub, s2Entry.session_type, initialPattern);
+      const s2End = s2Entry.end_time.slice(0, 5) || calculateEndTime(s2Start, dur2);
+
+      setSession2Data({
+        instructor_id: s2Entry.instructor_id,
+        room_id: s2Entry.room_id || '',
+        day_of_week: s2Entry.day_of_week,
+        start_time: s2Start,
+        end_time: s2End,
+        session_type: s2Entry.session_type,
+        notes: (s2Entry as any).notes || '',
+      });
+    } else {
+      const dur2 = getSubjectSessionDurationMinutes(sub, sub?.requires_lab ? 'lab' : 'lecture', initialPattern);
+      const targetLabRoom = availableRooms.find((r) => r.room_type === 'laboratory') || availableRooms[0] || rooms[0];
+      setSession2Data({
+        instructor_id: s1Entry.instructor_id,
+        room_id: (sub?.requires_lab ? targetLabRoom?.id : s1Entry.room_id) || '',
+        day_of_week: initialPattern === 'TTH' ? 4 : 3,
+        start_time: s1Start,
+        end_time: calculateEndTime(s1Start, dur2),
+        session_type: sub?.requires_lab ? 'lab' : 'lecture',
+        notes: '',
+      });
+    }
+
     setModalError(null);
     setIsModalOpen(true);
   };
@@ -710,8 +1764,22 @@ export function ScheduleEditorClient({
       return;
     }
 
+    const targetOffering = initialOfferings.find((o) => o.id === (formData.offering_id || blockOfferings[0]?.id));
+    if (targetOffering && !isSubjectAllowed(targetOffering.subject_id)) {
+      setModalError('Unauthorized: This course is outside your department scheduler supervision scope.');
+      return;
+    }
+
+    if (!isNoRoom && formData.room_id && !isRoomAllowed(formData.room_id)) {
+      const r = rooms.find((rm) => rm.id === formData.room_id);
+      setModalError(
+        `Unauthorized: Room "${r?.name || 'Selected Room'}" is not permitted for use by the ${schedulerDepartment} department.`
+      );
+      return;
+    }
+
     if (formData.end_time <= formData.start_time) {
-      setModalError('End time must be after start time.');
+      setModalError('Session 1 end time must be after start time.');
       return;
     }
 
@@ -736,25 +1804,114 @@ export function ScheduleEditorClient({
       return;
     }
 
-    const payload: ScheduleEntryFormInput = {
+    // Validate Session 2 if active
+    if (hasSecondSession) {
+      if (!isSecondNoRoom && session2Data.room_id && !isRoomAllowed(session2Data.room_id)) {
+        const r = rooms.find((rm) => rm.id === session2Data.room_id);
+        setModalError(
+          `Unauthorized: Session 2 Room "${r?.name || 'Selected Room'}" is not permitted for use by the ${schedulerDepartment} department.`
+        );
+        return;
+      }
+      if (session2Data.end_time <= session2Data.start_time) {
+        setModalError('Session 2 end time must be after start time.');
+        return;
+      }
+      if (!session2Data.instructor_id) {
+        setModalError('Please select a qualified instructor for Session 2.');
+        return;
+      }
+    }
+
+    const offId =
+      formData.offering_id || blockOfferings[0]?.id || initialOfferings[0]?.id || '';
+
+    const curOff = initialOfferings.find((o) => o.id === offId);
+    const curSub = subjects.find((s) => s.id === curOff?.subject_id);
+    const isUnspecified = isSubjectUnspecified(curSub?.id) || isSubjectUnspecified(curSub?.code);
+    const naRoomId = '00000000-0000-0000-0000-000000000000';
+
+    // Room collision check for Session 1
+    if (!isNoRoom && formData.room_id && formData.room_id !== naRoomId) {
+      const roomOccupied = entries.some(
+        (e) =>
+          (!editingEntry || e.id !== editingEntry.id) &&
+          e.day_of_week === formData.day_of_week &&
+          e.room_id === formData.room_id &&
+          timeRangesOverlap(e.start_time, e.end_time, formData.start_time, formData.end_time)
+      );
+      if (roomOccupied) {
+        const r = rooms.find((rm) => rm.id === formData.room_id);
+        const dayName = DAYS.find((d) => d.index === formData.day_of_week)?.name || 'this day';
+        setModalError(
+          `Room "${r?.name || 'Selected Room'}" is already occupied on ${dayName} from ${formData.start_time} to ${formData.end_time}. Please select an alternative room.`
+        );
+        return;
+      }
+    }
+
+    // Instructor collision check for Session 1
+    if (formData.instructor_id) {
+      const instOccupied = entries.some(
+        (e) =>
+          (!editingEntry || e.id !== editingEntry.id) &&
+          e.day_of_week === formData.day_of_week &&
+          e.instructor_id === formData.instructor_id &&
+          timeRangesOverlap(e.start_time, e.end_time, formData.start_time, formData.end_time)
+      );
+      if (instOccupied) {
+        const inst = instructors.find((i) => i.id === formData.instructor_id);
+        setModalError(
+          `Instructor "${inst?.full_name || 'Selected Faculty'}" is already teaching another class at that time. Please select an alternative instructor.`
+        );
+        return;
+      }
+    }
+
+    // Validate Session 2 conflicts if active
+    if (hasSecondSession) {
+      if (!isSecondNoRoom && session2Data.room_id && session2Data.room_id !== naRoomId) {
+        const roomOccupied2 = entries.some(
+          (e) =>
+            (!secondEntry || e.id !== secondEntry.id) &&
+            e.day_of_week === session2Data.day_of_week &&
+            e.room_id === session2Data.room_id &&
+            timeRangesOverlap(e.start_time, e.end_time, session2Data.start_time, session2Data.end_time)
+        );
+        if (roomOccupied2) {
+          const r = rooms.find((rm) => rm.id === session2Data.room_id);
+          const dayName = DAYS.find((d) => d.index === session2Data.day_of_week)?.name || 'this day';
+          setModalError(
+            `Session 2 Room "${r?.name || 'Selected Room'}" is already occupied on ${dayName} from ${session2Data.start_time} to ${session2Data.end_time}. Please select an alternative room.`
+          );
+          return;
+        }
+      }
+      if (session2Data.instructor_id) {
+        const instOccupied2 = entries.some(
+          (e) =>
+            (!secondEntry || e.id !== secondEntry.id) &&
+            e.day_of_week === session2Data.day_of_week &&
+            e.instructor_id === session2Data.instructor_id &&
+            timeRangesOverlap(e.start_time, e.end_time, session2Data.start_time, session2Data.end_time)
+        );
+        if (instOccupied2) {
+          const inst = instructors.find((i) => i.id === session2Data.instructor_id);
+          setModalError(
+            `Session 2 Instructor "${inst?.full_name || 'Selected Faculty'}" is already teaching another class at that time. Please select an alternative instructor.`
+          );
+          return;
+        }
+      }
+    }
+
+    const payload1: ScheduleEntryFormInput = {
       ...formData,
-      offering_id:
-        formData.offering_id || blockOfferings[0]?.id || initialOfferings[0]?.id || '',
+      offering_id: offId,
       instructor_id: formData.instructor_id,
-      room_id: isNoRoom ? null : (formData.room_id || null),
+      room_id: isUnspecified || isNoRoom ? naRoomId : (formData.room_id || naRoomId),
       notes: formData.notes?.trim() ? formData.notes.trim() : null,
-      days_of_week:
-        !editingEntry && scheduleDayPattern === 'MW'
-          ? [1, 3]
-          : !editingEntry && scheduleDayPattern === 'TTH'
-          ? [2, 4]
-          : undefined,
-      day_of_week:
-        scheduleDayPattern === 'MW'
-          ? 1
-          : scheduleDayPattern === 'TTH'
-          ? 2
-          : formData.day_of_week,
+      day_of_week: formData.day_of_week,
     };
 
     startTransition(async () => {
@@ -762,8 +1919,28 @@ export function ScheduleEditorClient({
         await saveScheduleEntryAction(
           draftVersion.id,
           editingEntry ? editingEntry.id : null,
-          payload
+          payload1
         );
+
+        if (hasSecondSession) {
+          const payload2: ScheduleEntryFormInput = {
+            offering_id: offId,
+            instructor_id: session2Data.instructor_id,
+            room_id: isUnspecified || isSecondNoRoom ? naRoomId : (session2Data.room_id || naRoomId),
+            day_of_week: session2Data.day_of_week,
+            start_time: session2Data.start_time,
+            end_time: session2Data.end_time,
+            session_type: session2Data.session_type,
+            notes: session2Data.notes?.trim() ? session2Data.notes.trim() : null,
+          };
+
+          await saveScheduleEntryAction(
+            draftVersion.id,
+            secondEntry ? secondEntry.id : null,
+            payload2
+          );
+        }
+
         setIsModalOpen(false);
         setBannerNotice({
           type: 'success',
@@ -783,6 +1960,16 @@ export function ScheduleEditorClient({
       setBannerNotice({
         type: 'error',
         message: 'Cannot delete an entry from a published or archived schedule. Start a new draft.',
+      });
+      return;
+    }
+
+    const targetEntry = entries.find((e) => e.id === entryId);
+    const targetOff = initialOfferings.find((o) => o.id === targetEntry?.offering_id);
+    if (targetOff && !isSubjectAllowed(targetOff.subject_id)) {
+      setBannerNotice({
+        type: 'error',
+        message: 'Unauthorized: This course is outside your department scheduler supervision scope.',
       });
       return;
     }
@@ -938,6 +2125,7 @@ export function ScheduleEditorClient({
     setIsAiDrafting(true);
     try {
       const targetBlockIds = aiScope === 'current' && selectedBlockId ? [selectedBlockId] : blocks.map((b) => b.id);
+      const wantsSaturday = aiAllowSaturday || /saturday|sat\b/i.test(aiPromptNotes);
       const res = await generateAiDraftAction(
         currentTermId,
         targetBlockIds,
@@ -945,14 +2133,29 @@ export function ScheduleEditorClient({
           splitTwoDays: true,
           preferMornings: true,
           noClassesAfter5pm: false,
-          allowSaturday: false,
+          allowSaturday: wantsSaturday,
           customNotes: aiPromptNotes.trim() || undefined,
+          refineScope: mode === 'refine' ? aiRefineScope : undefined,
         },
         mode
       );
 
+      if (mode === 'refine' && (res.collisionError || !res.success)) {
+        const errorMsg =
+          res.collisionError ||
+          res.results.find((r) => !r.success && r.error)?.error ||
+          'The requested schedule adjustment collided with another class or availability constraint.';
+        setIsAiModalOpen(false);
+        setCollisionNotice({
+          message: errorMsg,
+          attemptedPrompt: aiPromptNotes,
+        });
+        return;
+      }
+
       if (res.success) {
         setIsAiModalOpen(false);
+        setCollisionNotice(null);
         const entriesCount = res.results.reduce((acc, r) => acc + r.entriesWritten.length, 0);
 
         if (res.unassignedWarnings && res.unassignedWarnings.length > 0) {
@@ -987,6 +2190,55 @@ export function ScheduleEditorClient({
       });
     } finally {
       setIsAiDrafting(false);
+    }
+  };
+
+  // Clear all schedules in the current draft version across all blocks
+  const handleClearAllDraftSchedules = async () => {
+    setIsClearingAll(true);
+    try {
+      const res = await clearAllDraftScheduleEntriesAction(draftVersion.id);
+      setIsConfirmClearAllOpen(false);
+      setBannerNotice({
+        type: 'success',
+        message: userRole === 'admin'
+          ? `Cleared all ${res.clearedCount} scheduled sessions across all blocks for draft v${draftVersion.version_number}.`
+          : `Cleared ${res.clearedCount} scheduled sessions within your ${schedulerDepartment || 'department'} scope for draft v${draftVersion.version_number}.`,
+      });
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (err: unknown) {
+      setBannerNotice({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to clear schedules.',
+      });
+    } finally {
+      setIsClearingAll(false);
+    }
+  };
+
+  // Clear schedules for the currently selected block
+  const handleClearBlockDraftSchedule = async () => {
+    if (!selectedBlockId) return;
+    setIsClearingBlock(true);
+    try {
+      const res = await clearBlockDraftScheduleEntriesAction(draftVersion.id, selectedBlockId);
+      setIsConfirmClearBlockOpen(false);
+      setBannerNotice({
+        type: 'success',
+        message: `Cleared all ${res.clearedCount} scheduled sessions for ${selectedBlock ? formatBlockLabel(selectedBlock) : 'this block'}.`,
+      });
+      startTransition(() => {
+        router.refresh();
+      });
+    } catch (err: unknown) {
+      setBannerNotice({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to clear block schedule.',
+      });
+    } finally {
+      setIsClearingBlock(false);
     }
   };
 
@@ -1220,21 +2472,32 @@ export function ScheduleEditorClient({
 
   // Render In-page Department Masterlist Panel (Spreadsheet + Weekly Grid)
   const renderMasterlistPanel = () => {
+    const isHsMaster = masterlistDept === 'high_school';
     return (
-      <div className="bg-white rounded-5 p-4 shadow-sm border border-primary border-opacity-25 mb-4">
+      <div
+        className={`bg-white rounded-5 p-4 shadow-sm border ${
+          isHsMaster ? 'border-success border-opacity-35' : 'border-primary border-opacity-25'
+        } mb-4`}
+      >
         {/* Masterlist Header */}
         <div className="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3 pb-3 mb-3 border-bottom border-light-subtle">
           <div>
             <div className="d-flex align-items-center gap-2 mb-1">
               <span
                 className="d-inline-flex align-items-center justify-content-center text-white rounded-3 shadow-sm"
-                style={{ width: '36px', height: '36px', backgroundColor: '#0E0AB8' }}
+                style={{ width: '36px', height: '36px', backgroundColor: isHsMaster ? '#16a34a' : '#0E0AB8' }}
               >
                 <i className="bi bi-table fs-6"></i>
               </span>
               <h5 className="fw-bold text-dark mb-0">Department Master Schedule</h5>
-              <span className="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill">
-                {masterlistBlocks.length} Blocks
+              <span
+                className={`badge rounded-pill ${
+                  isHsMaster
+                    ? 'bg-success-subtle text-success border border-success-subtle'
+                    : 'bg-primary-subtle text-primary border border-primary-subtle'
+                }`}
+              >
+                {departmentOptions.find((d) => d.id === masterlistDept)?.name || 'Department'} &bull; {masterlistBlocks.length} Blocks
               </span>
             </div>
             <p className="text-secondary small mb-0">
@@ -1245,24 +2508,36 @@ export function ScheduleEditorClient({
           <div className="d-flex flex-wrap align-items-center gap-2">
             {/* Department Switcher */}
             <div className="d-flex align-items-center gap-1.5 p-1 bg-light rounded-3 border">
-              {departmentOptions.map((dept) => (
-                <button
-                  key={dept.id}
-                  type="button"
-                  onClick={() => {
-                    setMasterlistDept(dept.id);
-                    setMasterlistBlockFilter('all');
-                  }}
-                  className={`btn btn-sm px-3 py-1.5 rounded-2 fw-semibold border-0 transition ${
-                    masterlistDept === dept.id
-                      ? 'bg-primary text-white shadow-sm'
-                      : 'text-secondary hover:text-dark'
-                  }`}
-                  style={masterlistDept === dept.id ? { backgroundColor: '#0E0AB8' } : {}}
-                >
-                  {dept.name} ({dept.blockCount})
-                </button>
-              ))}
+              {departmentOptions.map((dept) => {
+                const isSelected = masterlistDept === dept.id;
+                const isHs = dept.id === 'high_school';
+                return (
+                  <button
+                    key={dept.id}
+                    type="button"
+                    onClick={() => {
+                      setMasterlistDept(dept.id);
+                      setMasterlistBlockFilter('all');
+                    }}
+                    className={`btn btn-sm px-3 py-1.5 rounded-2 fw-semibold border-0 transition ${
+                      isSelected
+                        ? isHs
+                          ? 'bg-success text-white shadow-sm'
+                          : 'bg-primary text-white shadow-sm'
+                        : 'text-secondary hover:text-dark'
+                    }`}
+                    style={
+                      isSelected
+                        ? isHs
+                          ? { backgroundColor: '#16a34a', color: '#ffffff' }
+                          : { backgroundColor: '#0E0AB8', color: '#ffffff' }
+                        : {}
+                    }
+                  >
+                    {dept.name} ({dept.blockCount})
+                  </button>
+                );
+              })}
             </div>
 
             {/* View Mode Toggle: Spreadsheet vs Weekly Grid */}
@@ -1324,7 +2599,12 @@ export function ScheduleEditorClient({
             onEditEntry={handleOpenEdit}
             onDeleteEntry={handleDelete}
             onAddEntry={() => handleOpenAdd()}
-            onGenerateAiDraft={() => setIsAiModalOpen(true)}
+            onGenerateAiDraft={() =>
+              router.push(
+                `/scheduler/generate?termId=${currentTermId}${masterlistBlockFilter && masterlistBlockFilter !== 'all' ? `&blockId=${masterlistBlockFilter}` : ''}`
+              )
+            }
+            isSubjectAllowed={isSubjectAllowed}
           />
         ) : (
           <div className="bg-white rounded-4 shadow-sm border border-light-subtle overflow-hidden">
@@ -1462,16 +2742,24 @@ export function ScheduleEditorClient({
                             const instructor = instructors.find((i) => i.id === e.instructor_id);
                             const room = rooms.find((r) => r.id === e.room_id);
 
+                            const canEdit = !isReadOnly && isSubjectAllowed(offering?.subject_id);
+
                             return (
                               <div
                                 key={e.id}
-                                className="rounded-3 p-1.5 transition position-absolute shadow-sm d-flex flex-column justify-content-between overflow-hidden bg-white border border-light-subtle text-dark"
+                                onClick={() => {
+                                  if (canEdit) handleOpenEdit(e);
+                                }}
+                                className={`rounded-3 p-1.5 transition position-absolute shadow-sm d-flex flex-column justify-content-between overflow-hidden bg-white border border-light-subtle text-dark ${
+                                  canEdit ? 'cursor-pointer hover:border-primary hover:shadow' : ''
+                                }`}
                                 style={{
                                   top: `${topOffset + 2}px`,
                                   height: `${cardHeight}px`,
                                   left: `calc(${leftPercent}% + 2px)`,
                                   width: `calc(${widthPercent}% - 4px)`,
                                   zIndex: 3,
+                                  cursor: canEdit ? 'pointer' : 'default',
                                 }}
                               >
                                 <div>
@@ -1502,16 +2790,27 @@ export function ScheduleEditorClient({
                                     {formatTimeShort(e.start_time)}-{formatTimeShort(e.end_time)}
                                   </span>
                                   {!isReadOnly && (
-                                    <button
-                                      onClick={(ev) => {
-                                        ev.stopPropagation();
-                                        handleOpenEdit(e);
-                                      }}
-                                      className="btn btn-outline-secondary btn-sm py-0 px-1"
-                                      style={{ fontSize: '8.5px', lineHeight: '1.2' }}
-                                    >
-                                      Edit
-                                    </button>
+                                    isSubjectAllowed(offering?.subject_id) ? (
+                                      <button
+                                        type="button"
+                                        onClick={(ev) => {
+                                          ev.stopPropagation();
+                                          handleOpenEdit(e);
+                                        }}
+                                        className="btn btn-outline-secondary btn-sm py-0 px-1"
+                                        style={{ fontSize: '8.5px', lineHeight: '1.2' }}
+                                      >
+                                        Edit
+                                      </button>
+                                    ) : (
+                                      <span
+                                        className="badge bg-secondary-subtle text-secondary border px-1"
+                                        style={{ fontSize: '7.5px' }}
+                                        title="Outside supervision scope"
+                                      >
+                                        Locked
+                                      </span>
+                                    )
                                   )}
                                 </div>
                               </div>
@@ -1532,17 +2831,29 @@ export function ScheduleEditorClient({
 
   return (
     <div className="space-y-6">
-      {/* Top Banner Notice */}
+      {/* Floating Notice Alert - always visible over timetable */}
       {bannerNotice && (
         <div
-          className={`alert ${
-            bannerNotice.type === 'success' ? 'alert-success' : 'alert-danger'
-          } rounded-4 d-flex align-items-center justify-content-between p-3 mb-3 shadow-sm`}
+          className="position-fixed start-50 translate-middle-x shadow-lg d-flex align-items-center justify-content-between px-4 py-3 rounded-4"
+          style={{
+            bottom: '28px',
+            zIndex: 10500,
+            maxWidth: '680px',
+            width: 'calc(100% - 32px)',
+            backgroundColor: bannerNotice.type === 'success' ? '#0f5132' : '#842029',
+            color: '#ffffff',
+            border: `1px solid ${bannerNotice.type === 'success' ? '#20c997' : '#ea868f'}`,
+            boxShadow: '0 12px 36px rgba(0, 0, 0, 0.35)',
+          }}
         >
-          <span>{bannerNotice.message}</span>
+          <div className="d-flex align-items-center gap-2.5 pe-3">
+            <i className={`bi ${bannerNotice.type === 'success' ? 'bi-check-circle-fill text-success' : 'bi-exclamation-triangle-fill text-warning'} fs-5 flex-shrink-0`}></i>
+            <span className="fw-medium small" style={{ lineHeight: '1.4' }}>{bannerNotice.message}</span>
+          </div>
           <button
             onClick={() => setBannerNotice(null)}
-            className="btn btn-sm btn-link text-decoration-none text-reset"
+            className="btn btn-sm btn-light fw-bold rounded-pill px-3 py-1 text-dark shadow-sm flex-shrink-0"
+            style={{ fontSize: '12px' }}
           >
             Dismiss
           </button>
@@ -1638,250 +2949,53 @@ export function ScheduleEditorClient({
       {selectedBlockId ? (
         /* DETAILED SCHEDULE EDITOR FOR SELECTED BLOCK */
         <>
-          {/* Control Bar */}
-          <div className="bg-white rounded-4 p-4 shadow-sm border border-white d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3 mb-4">
-            <div className="d-flex flex-wrap align-items-center gap-3">
-              <div className="d-flex align-items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleSelectBlock(null)}
-                  className="btn btn-outline-secondary rounded-circle d-inline-flex align-items-center justify-content-center shadow-none p-0 transition"
-                  style={{ width: '38px', height: '38px' }}
-                  title="Back to Year Level and Block Cohorts overview"
-                  aria-label="Back to Overview"
-                >
-                  <i className="bi bi-arrow-left fs-5"></i>
-                </button>
-
-                <div className="border-start ps-3 py-0.5">
-                  <div className="small text-muted fw-semibold text-uppercase" style={{ fontSize: '11px', letterSpacing: '0.04em' }}>
-                    Editing Schedule For
-                  </div>
-                  <div className="fw-bold text-dark fs-6 d-flex align-items-center gap-2">
-                    <span>{selectedBlock ? formatBlockLabel(selectedBlock) : 'Block'}</span>
-                    <span className="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill fw-normal" style={{ fontSize: '11px' }}>
-                      {selectedBlock?.student_count || 0} Students
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="form-label small fw-semibold text-muted text-uppercase mb-1" style={{ fontSize: '11px' }}>
-                  Schedule Version
-                </label>
-                <select
-                  value={draftVersion.id}
-                  onChange={(e) => {
-                    const targetParam = selectedBlockId ? `&blockId=${selectedBlockId}` : '';
-                    router.push(`/scheduler/schedule?termId=${currentTermId}&versionId=${e.target.value}${targetParam}`);
-                  }}
-                  className="form-select ref-form-control"
-                  style={{ minWidth: '180px' }}
-                >
-              {(versions || [draftVersion]).map((v) => (
-                <option key={v.id} value={v.id}>
-                  {versionNames[v.id] ? `${versionNames[v.id]} (v${v.version_number})` : `v${v.version_number}`} &bull; {v.status.toUpperCase()}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="pt-sm-3 d-flex align-items-center gap-1.5">
-            <span
-              className={
-                draftVersion.status === 'published'
-                  ? 'pill-status-progress'
-                  : draftVersion.status === 'archived'
-                  ? 'pill-status-archived'
-                  : 'pill-status-pending'
-              }
-            >
-              {versionNames[draftVersion.id] ? versionNames[draftVersion.id] : `v${draftVersion.version_number}`} [{draftVersion.status.toUpperCase()}]
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setRenameDraftName(versionNames[draftVersion.id] || `Draft v${draftVersion.version_number}`);
-                setIsRenameModalOpen(true);
-              }}
-              className="btn btn-sm btn-outline-secondary py-1 px-2 rounded-3 d-flex align-items-center gap-1 shadow-none"
-              title="Rename this version draft"
-            >
-              <i className="bi bi-pencil-square"></i>
-              <span className="small d-none d-md-inline">Rename</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="d-flex flex-wrap align-items-center gap-2">
-          {/* Scheduling Style Toggle */}
-          <div className="btn-group btn-group-sm p-1 bg-light rounded-3 border" role="group" aria-label="Scheduling Style Toggle">
-            <button
-              type="button"
-              onClick={() => setScheduleStyle('grid')}
-              className={`btn btn-sm px-3 fw-semibold transition d-flex align-items-center gap-1.5 ${
-                scheduleStyle === 'grid'
-                  ? 'btn-primary text-white shadow-sm'
-                  : 'btn-light text-secondary'
-              }`}
-              style={scheduleStyle === 'grid' ? { backgroundColor: '#0E0AB8', borderColor: '#0E0AB8' } : {}}
-            >
-              <i className="bi bi-calendar3-week"></i>
-              <span>Weekly Grid</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setScheduleStyle('spreadsheet')}
-              className={`btn btn-sm px-3 fw-semibold transition d-flex align-items-center gap-1.5 ${
-                scheduleStyle === 'spreadsheet'
-                  ? 'btn-primary text-white shadow-sm'
-                  : 'btn-light text-secondary'
-              }`}
-              style={scheduleStyle === 'spreadsheet' ? { backgroundColor: '#0E0AB8', borderColor: '#0E0AB8' } : {}}
-            >
-              <i className="bi bi-table"></i>
-              <span>Spreadsheet Style</span>
-            </button>
-          </div>
-
-          {/* Export Buttons */}
-          <div className="d-flex align-items-center gap-1">
-            <a
-              href={`/api/schedule/export?versionId=${draftVersion.id}&format=pdf&blockId=${selectedBlockId}`}
-              download
-              className="btn-ref-secondary small py-2 px-3"
-              title="Export this block timetable to PDF"
-            >
-              <i className="bi bi-file-earmark-pdf me-1 text-danger"></i>
-              PDF
-            </a>
-            <a
-              href={`/api/schedule/export?versionId=${draftVersion.id}&format=excel&blockId=${selectedBlockId}`}
-              download
-              className="btn-ref-secondary small py-2 px-3"
-              title="Export this block timetable to Excel (.xlsx)"
-            >
-              <i className="bi bi-file-earmark-spreadsheet me-1 text-success"></i>
-              Excel
-            </a>
-          </div>
-
-          {/* Masterlist Toggle Button */}
-          <button
-            type="button"
-            onClick={() => setShowMasterlist(!showMasterlist)}
-            className={`btn-ref-secondary small py-2 px-3 d-flex align-items-center gap-1.5 ${
-              showMasterlist ? 'bg-primary text-white border-primary shadow-sm' : ''
-            }`}
-            title="Open whole department masterlist (spreadsheet & weekly grid)"
-          >
-            <i className={`bi bi-table ${showMasterlist ? 'text-white' : 'text-primary'}`}></i>
-            <span>{showMasterlist ? 'Hide Masterlist' : 'Masterlist'}</span>
-          </button>
-
-          {/* Validate All Button */}
-          <button
-            onClick={() => setIsValidationPanelOpen(!isValidationPanelOpen)}
-            className="btn-ref-secondary small py-2 px-3 d-flex align-items-center gap-2"
-          >
-            <i className="bi bi-shield-check text-primary"></i>
-            <span>Validate</span>
-            {hardViolationsCount > 0 && (
-              <span className="badge rounded-pill bg-danger">
-                {hardViolationsCount}
-              </span>
-            )}
-            {softViolationsCount > 0 && (
-              <span className="badge rounded-pill bg-warning text-dark">
-                {softViolationsCount}
-              </span>
-            )}
-            {hardViolationsCount === 0 && softViolationsCount === 0 && (
-              <span className="badge rounded-pill bg-success-subtle text-success">Clean</span>
-            )}
-          </button>
-
-          {!isReadOnly ? (
-            <>
-              {/* Save Draft Button */}
-              <button
-                type="button"
-                onClick={handleSaveDraft}
-                disabled={isPending || isSavingDraft}
-                className="btn-ref-secondary small py-2 px-3 d-flex align-items-center gap-1.5"
-                title="Save current schedule draft progress"
-              >
-                {isSavingDraft ? (
-                  <span className="spinner-border spinner-border-sm text-primary" role="status" />
-                ) : (
-                  <i className="bi bi-floppy text-primary"></i>
-                )}
-                <span>{isSavingDraft ? 'Saving...' : 'Save Draft'}</span>
-                {lastSavedTime && (
-                  <span className="text-muted small" style={{ fontSize: '10px' }}>({lastSavedTime})</span>
-                )}
-              </button>
-
-              {/* AI Draft Button */}
-              <button
-                type="button"
-                onClick={() => setIsAiModalOpen(true)}
-                disabled={isPending || isAiDrafting}
-                className="btn-ref-secondary small py-2 px-3 d-flex align-items-center gap-1"
-                title="Automatically generate and place schedule draft"
-              >
-                <i className="bi bi-stars text-primary"></i>
-                <span>AI Draft</span>
-              </button>
-
-              {/* Add Entry Button */}
-              <button
-                onClick={handleOpenAdd}
-                disabled={isPending}
-                className="btn-ref-secondary small py-2 px-3 d-flex align-items-center gap-1"
-              >
-                <i className="bi bi-plus-lg text-primary"></i>
-                <span>Add Class</span>
-              </button>
-
-              {/* Publish Schedule Button */}
-              <button
-                onClick={handleTriggerPublish}
-                disabled={isPending}
-                className="btn-ref-primary small py-2 px-4 d-flex align-items-center gap-1"
-              >
-                <i className="bi bi-cloud-arrow-up me-1"></i>
-                <span>Publish Schedule</span>
-              </button>
-            </>
-          ) : (
-            <div className="d-flex align-items-center gap-2">
-              <button
-                onClick={handleStartNewDraft}
-                disabled={isPending}
-                className="btn-ref-primary small py-2 px-3 d-flex align-items-center gap-1"
-              >
-                <i className="bi bi-plus-lg me-1"></i>
-                <span>Start New Draft</span>
-              </button>
-
-              {draftVersion.status === 'archived' && (
-                <button
-                  type="button"
-                  onClick={() => setIsConfirmDeleteArchiveOpen(true)}
-                  disabled={isPending || isDeletingArchive}
-                  className="btn btn-outline-danger btn-sm py-2 px-3 d-flex align-items-center gap-1.5"
-                  title="Permanently delete this archived schedule version"
-                >
-                  <i className="bi bi-trash3"></i>
-                  <span>Delete Archive</span>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+          {/* Schedule Editor Toolbar */}
+          <ScheduleEditorToolbar
+            terms={terms}
+            currentTermId={currentTermId}
+            currentTerm={currentTerm}
+            blocks={blocks}
+            selectedBlockId={selectedBlockId}
+            selectedBlock={selectedBlock || undefined}
+            draftVersion={draftVersion}
+            versionName={versionNames[draftVersion.id]}
+            versionNames={versionNames}
+            versions={versions}
+            scheduleStyle={scheduleStyle}
+            zoomDensity={zoomDensity}
+            showMasterlist={showMasterlist}
+            isReadOnly={isReadOnly}
+            isPending={isPending}
+            isAiDrafting={isAiDrafting}
+            isClearingBlock={isClearingBlock}
+            isPublishing={isPublishing}
+            hardViolationsCount={hardViolationsCount}
+            softViolationsCount={softViolationsCount}
+            selectedBlockEntriesCount={selectedBlockEntries.length}
+            formatBlockLabel={formatBlockLabel}
+            onBackToOverview={() => handleSelectBlock(null)}
+            onRenameVersion={() => {
+              setRenameDraftName(versionNames[draftVersion.id] || `Draft v${draftVersion.version_number}`);
+              setIsRenameModalOpen(true);
+            }}
+            onSelectBlock={(bId) => handleSelectBlock(bId)}
+            onSelectTerm={(tId) => router.push(`/scheduler/schedule?termId=${tId}`)}
+            onSelectVersion={(vId) => {
+              const targetParam = selectedBlockId ? `&blockId=${selectedBlockId}` : '';
+              router.push(`/scheduler/schedule?termId=${currentTermId}&versionId=${vId}${targetParam}`);
+            }}
+            onSetScheduleStyle={setScheduleStyle}
+            onSetZoomDensity={setZoomDensity}
+            onToggleMasterlist={() => setShowMasterlist(!showMasterlist)}
+            onToggleValidationPanel={() => setIsValidationPanelOpen(!isValidationPanelOpen)}
+            onOpenVersionsModal={() => {}}
+            onOpenAiAdjustments={() => {
+              setAiScope('current');
+              setIsAiModalOpen(true);
+            }}
+            onOpenClearBlockConfirm={() => setIsConfirmClearBlockOpen(true)}
+            onOpenPublishConfirm={handleTriggerPublish}
+          />
 
       {/* Unassigned Course Hours Tray */}
       {unassignedOfferings.length > 0 && (
@@ -1901,13 +3015,15 @@ export function ScheduleEditorClient({
 
           <div className="row g-2">
             {unassignedOfferings.map((item) => {
+              const isAllowed = isSubjectAllowed(item.offering.subject_id);
               const isDragging = draggingOfferingId === item.offering.id;
+              const canDrag = !isReadOnly && isAllowed;
               return (
                 <div key={item.offering.id} className="col-12 col-sm-6 col-md-4 col-lg-3">
                   <div
-                    draggable={!isReadOnly}
+                    draggable={canDrag}
                     onDragStart={(e) => {
-                      if (isReadOnly) return;
+                      if (!canDrag) return;
                       setDraggingOfferingId(item.offering.id);
                       e.dataTransfer.setData('offeringId', item.offering.id);
                       e.dataTransfer.setData('text/plain', item.offering.id);
@@ -1918,16 +3034,20 @@ export function ScheduleEditorClient({
                       setDragOverSlot(null);
                     }}
                     className={`p-3 rounded-3 border h-100 d-flex flex-column justify-content-between small transition ${
-                      isDragging
+                      !isAllowed
+                        ? 'bg-light border-light-subtle opacity-75'
+                        : isDragging
                         ? 'border-primary shadow bg-primary-subtle opacity-75'
                         : 'bg-light border-light-subtle hover-shadow'
                     }`}
                     style={{
-                      cursor: isReadOnly ? 'default' : 'grab',
+                      cursor: !canDrag ? 'default' : 'grab',
                       userSelect: 'none',
                     }}
                     title={
-                      isReadOnly
+                      !isAllowed
+                        ? `${item.subject?.code} - Outside supervision scope`
+                        : isReadOnly
                         ? `${item.subject?.code} - ${item.subject?.title}`
                         : `Drag onto any weekly grid slot below, or click Manual +`
                     }
@@ -1940,31 +3060,67 @@ export function ScheduleEditorClient({
                         >
                           {item.subject?.code} - {item.subject?.title}
                         </div>
-                        {!isReadOnly && (
+                        {!isAllowed ? (
+                          <span
+                            className="badge bg-secondary-subtle text-secondary border px-1.5 py-0.5"
+                            style={{ fontSize: '9px' }}
+                          >
+                            <i className="bi bi-lock-fill me-1"></i>Locked
+                          </span>
+                        ) : !isReadOnly ? (
                           <span
                             className="badge bg-white text-secondary border px-1.5 py-0.5"
                             style={{ fontSize: '9px' }}
                           >
                             <i className="bi bi-arrows-move"></i>
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       <div className="text-muted mt-1" style={{ fontSize: '11px' }}>
                         Scheduled: {item.scheduledHours}h / {item.requiredHours}h
+                        {item.subject && (item.subject.lecture_hours > 0 && item.subject.lab_hours > 0) && (
+                          <span className="ms-1 text-secondary">
+                            ({item.subject.lecture_hours}h Lec + {item.subject.lab_hours}h Lab)
+                          </span>
+                        )}
                       </div>
-                      <div className="text-warning fw-semibold mt-1" style={{ fontSize: '11px' }}>
-                        {item.remainingHours}h unplaced
+                      <div className="d-flex align-items-center justify-content-between mt-1">
+                        <span className="text-warning fw-semibold" style={{ fontSize: '11px' }}>
+                          {item.remainingHours}h unplaced
+                        </span>
+                        {item.nextSessionType && (
+                          <span
+                            className={`badge px-1.5 py-0.5 border ${
+                              item.nextSessionType === 'lab'
+                                ? 'bg-info-subtle text-info-emphasis border-info-subtle'
+                                : 'bg-primary-subtle text-primary border-primary-subtle'
+                            }`}
+                            style={{ fontSize: '9px' }}
+                            title={`Next drag places ${item.nextSessionType === 'lab' ? 'Laboratory' : 'Lecture'} session (${item.nextSessionDuration}h)`}
+                          >
+                            Next: {item.nextSessionType === 'lab' ? '🔬 Lab' : '📖 Lec'} ({item.nextSessionDuration}h)
+                          </span>
+                        )}
                       </div>
                     </div>
 
                     <div className="d-flex align-items-center justify-content-between mt-2 pt-2 border-top border-light-subtle">
-                      <span
-                        className="text-primary fw-semibold d-inline-flex align-items-center gap-1"
-                        style={{ fontSize: '10.5px' }}
-                      >
-                        <i className="bi bi-arrows-move"></i> Drag to Grid
-                      </span>
-                      {!isReadOnly && (
+                      {isAllowed ? (
+                        <span
+                          className="text-primary fw-semibold d-inline-flex align-items-center gap-1"
+                          style={{ fontSize: '10.5px' }}
+                        >
+                          <i className="bi bi-arrows-move"></i> Drag to Grid
+                        </span>
+                      ) : (
+                        <span
+                          className="text-muted d-inline-flex align-items-center gap-1"
+                          style={{ fontSize: '10.5px' }}
+                        >
+                          <i className="bi bi-shield-lock"></i> Restricted
+                        </span>
+                      )}
+                      {!isReadOnly && isAllowed && (
                         <button
                           type="button"
                           onClick={() => {
@@ -2039,421 +3195,44 @@ export function ScheduleEditorClient({
                 onEditEntry={handleOpenEdit}
                 onDeleteEntry={handleDelete}
                 onAddEntry={handleOpenAdd}
-                onGenerateAiDraft={() => setIsAiModalOpen(true)}
+                onGenerateAiDraft={() =>
+                  router.push(
+                    `/scheduler/generate?termId=${currentTermId}${selectedBlockId ? `&blockId=${selectedBlockId}` : ''}`
+                  )
+                }
+                isSubjectAllowed={isSubjectAllowed}
               />
             </div>
           ) : (
-            <div className="bg-white rounded-4 shadow-sm border border-white overflow-hidden">
-              <div className="p-3 px-4 border-bottom border-light d-flex flex-wrap align-items-center justify-content-between gap-3">
-                <div>
-                  <h5 className="fw-bold text-dark mb-0">
-                    Weekly Timetable Grid
-                  </h5>
-                  <span className="text-muted small">
-                    Showing scheduled classes for {selectedBlock ? formatBlockLabel(selectedBlock) : 'selected block'}
-                  </span>
-                </div>
-                <div className="d-flex flex-wrap align-items-center gap-3">
-                  {/* Room Filter Selector */}
-                  <div className="d-flex align-items-center gap-1.5">
-                    <span className="small text-muted fw-semibold" style={{ fontSize: '11px' }}>
-                      <i className="bi bi-door-open me-1"></i>Room:
-                    </span>
-                    <select
-                      value={selectedGridRoomFilter}
-                      onChange={(e) => setSelectedGridRoomFilter(e.target.value)}
-                      className="form-select form-select-sm ref-form-control py-1 px-2.5"
-                      style={{ minWidth: '150px', fontSize: '11px' }}
-                      aria-label="Filter weekly grid by room"
-                    >
-                      <option value="all">All Rooms</option>
-                      {rooms.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.name} ({r.room_type})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Toggle All Block Occupancy */}
-                  <div className="form-check form-switch d-flex align-items-center gap-1.5 mb-0">
-                    <input
-                      className="form-check-input"
-                      type="checkbox"
-                      role="switch"
-                      id="toggleAllBlocksOccupancy"
-                      checked={showAllBlockSchedules}
-                      onChange={(e) => setShowAllBlockSchedules(e.target.checked)}
-                      style={{ cursor: 'pointer' }}
-                    />
-                    <label
-                      className="form-check-label small fw-semibold text-secondary cursor-pointer"
-                      htmlFor="toggleAllBlocksOccupancy"
-                      style={{ fontSize: '11px' }}
-                    >
-                      All Blocks Room Occupancy
-                    </label>
-                  </div>
-
-                  {/* Legend */}
-                  <div className="d-flex align-items-center gap-1.5">
-                    <span className="badge bg-primary-subtle text-primary border" style={{ fontSize: '9.5px' }}>
-                      ■ Active Block
-                    </span>
-                    {showAllBlockSchedules && (
-                      <span className="badge bg-light text-secondary border border-secondary-subtle" style={{ fontSize: '9.5px' }}>
-                        ▫ Other Blocks
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <div style={{ minWidth: '850px' }}>
-                  {/* Header: Days of Week */}
-                  <div className="d-flex border-bottom border-light bg-light py-2 sticky-top z-2">
-                    <div className="text-center text-muted small fw-semibold border-end border-light" style={{ width: '75px', flexShrink: 0 }}>
-                      Time
-                    </div>
-                    {DAYS.map((d) => (
-                      <div
-                        key={d.index}
-                        className="col text-center text-dark small fw-bold border-end border-light"
-                      >
-                        <span>{d.name}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Body: Time Grid & Day Columns */}
-                  <div className="d-flex position-relative" style={{ height: `${TIME_SLOTS.length * HOUR_HEIGHT}px` }}>
-                    {/* Time Label Column (Left) */}
-                    <div className="border-end border-light bg-light bg-opacity-25" style={{ width: '75px', flexShrink: 0 }}>
-                      {TIME_SLOTS.map((timeSlot) => (
-                        <div
-                          key={timeSlot}
-                          className="border-bottom border-light-subtle text-muted font-monospace small d-flex align-items-start justify-content-center pt-1"
-                          style={{ height: `${HOUR_HEIGHT}px`, fontSize: '11px' }}
-                        >
-                          {timeSlot}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* 6 Day Columns with Absolute Cards */}
-                    <div className="d-flex flex-grow-1 position-relative">
-                      {DAYS.map((day) => {
-                        const currentBlockDayEntries = selectedBlockEntries.filter((e) => e.day_of_week === day.index);
-                        const filteredCurrentEntries =
-                          selectedGridRoomFilter === 'all'
-                            ? currentBlockDayEntries
-                            : currentBlockDayEntries.filter((e) => e.room_id === selectedGridRoomFilter);
-
-                        const otherBlockDayEntries = otherBlockEntries.filter((e) => e.day_of_week === day.index);
-                        const filteredOtherEntries =
-                          selectedGridRoomFilter === 'all'
-                            ? otherBlockDayEntries
-                            : otherBlockDayEntries.filter((e) => e.room_id === selectedGridRoomFilter);
-
-                        const dayEntries = showAllBlockSchedules
-                          ? [...filteredCurrentEntries, ...filteredOtherEntries]
-                          : filteredCurrentEntries;
-
-                        const layoutMap = computeDayLayout(dayEntries);
-
-                        return (
-                          <div
-                            key={day.index}
-                            className="col border-end border-light-subtle position-relative"
-                            style={{ height: `${TIME_SLOTS.length * HOUR_HEIGHT}px` }}
-                          >
-                            {/* Background Hour Grid Lines & Half-hour dash with Drop Targets */}
-                            {TIME_SLOTS.map((slot) => {
-                              const isSlotHovered =
-                                dragOverSlot?.dayIndex === day.index && dragOverSlot?.slotHour === slot;
-                              const isBottomHovered = isSlotHovered && dragOverSlot?.isHalfHour;
-                              const isTopHovered = isSlotHovered && !dragOverSlot?.isHalfHour;
-
-                              return (
-                                <div
-                                  key={slot}
-                                  onDragOver={(e) => {
-                                    if (isReadOnly) return;
-                                    e.preventDefault();
-                                    e.dataTransfer.dropEffect = 'copy';
-                                    const rect = e.currentTarget.getBoundingClientRect();
-                                    const isHalfHour = e.clientY - rect.top > rect.height / 2;
-                                    if (
-                                      dragOverSlot?.dayIndex !== day.index ||
-                                      dragOverSlot?.slotHour !== slot ||
-                                      dragOverSlot?.isHalfHour !== isHalfHour
-                                    ) {
-                                      setDragOverSlot({ dayIndex: day.index, slotHour: slot, isHalfHour });
-                                    }
-                                  }}
-                                  onDragLeave={(e) => {
-                                    const rect = e.currentTarget.getBoundingClientRect();
-                                    if (
-                                      e.clientX < rect.left ||
-                                      e.clientX >= rect.right ||
-                                      e.clientY < rect.top ||
-                                      e.clientY >= rect.bottom
-                                    ) {
-                                      if (dragOverSlot?.dayIndex === day.index && dragOverSlot?.slotHour === slot) {
-                                        setDragOverSlot(null);
-                                      }
-                                    }
-                                  }}
-                                  onDrop={(e) => {
-                                    if (isReadOnly) return;
-                                    e.preventDefault();
-                                    const offId =
-                                      e.dataTransfer.getData('offeringId') ||
-                                      e.dataTransfer.getData('text/plain') ||
-                                      draggingOfferingId;
-                                    const rect = e.currentTarget.getBoundingClientRect();
-                                    const isHalfHour = e.clientY - rect.top > rect.height / 2;
-                                    const [hourPart] = slot.split(':');
-                                    const calculatedStartTime = isHalfHour ? `${hourPart}:30` : `${hourPart}:00`;
-                                    setDragOverSlot(null);
-                                    setDraggingOfferingId(null);
-                                    if (offId) {
-                                      handleDropOnGrid(offId, day.index, calculatedStartTime);
-                                    }
-                                  }}
-                                  className={`border-bottom border-light-subtle w-100 position-relative transition ${
-                                    isSlotHovered ? 'bg-primary-subtle bg-opacity-25' : ''
-                                  }`}
-                                  style={{ height: `${HOUR_HEIGHT}px` }}
-                                >
-                                  {/* Top half hover drop indicator */}
-                                  {isTopHovered && (
-                                    <div
-                                      className="position-absolute start-0 end-0 top-0 d-flex align-items-center justify-content-center bg-primary text-white small fw-bold shadow-sm"
-                                      style={{ height: `${HOUR_HEIGHT / 2}px`, zIndex: 6, opacity: 0.9, fontSize: '10px' }}
-                                    >
-                                      <i className="bi bi-plus-circle me-1"></i> Place at {slot}
-                                    </div>
-                                  )}
-
-                                  <div
-                                    className="position-absolute start-0 end-0 border-bottom border-light-subtle border-opacity-50"
-                                    style={{ top: `${HOUR_HEIGHT / 2}px`, borderStyle: 'dashed' }}
-                                  />
-
-                                  {/* Bottom half hover drop indicator */}
-                                  {isBottomHovered && (
-                                    <div
-                                      className="position-absolute start-0 end-0 bottom-0 d-flex align-items-center justify-content-center bg-primary text-white small fw-bold shadow-sm"
-                                      style={{ height: `${HOUR_HEIGHT / 2}px`, zIndex: 6, opacity: 0.9, fontSize: '10px' }}
-                                    >
-                                      <i className="bi bi-plus-circle me-1"></i> Place at {slot.split(':')[0]}:30
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-
-                            {/* Positioned Subject Cards */}
-                            {dayEntries.map((e) => {
-                              const sMins = timeToMinutes(e.start_time);
-                              const eMins = timeToMinutes(e.end_time);
-                              const topOffset = Math.max(0, ((sMins - GRID_START_MIN) / 60) * HOUR_HEIGHT);
-                              const durationMins = Math.max(30, eMins - sMins);
-                              const cardHeight = Math.max(34, (durationMins / 60) * HOUR_HEIGHT - 4);
-
-                              const layout = layoutMap.get(e.id) || { colIndex: 0, totalCols: 1 };
-                              const widthPercent = 100 / layout.totalCols;
-                              const leftPercent = layout.colIndex * widthPercent;
-
-                              const offering = initialOfferings.find((o) => o.id === e.offering_id);
-                              const isCurrentBlock = offering?.block_id === selectedBlockId;
-                              const otherBlock = !isCurrentBlock ? blocks.find((b) => b.id === offering?.block_id) : null;
-                              const subject = subjects.find((s) => s.id === offering?.subject_id);
-                              const instructor = instructors.find((i) => i.id === e.instructor_id);
-                              const room = rooms.find((r) => r.id === e.room_id);
-                              const entryViolations = violationsByEntryId.get(e.id);
-                              const isHighlighted = highlightedEntryId === e.id;
-
-                              if (!isCurrentBlock) {
-                                return (
-                                  <div
-                                    key={e.id}
-                                    className="rounded-3 p-1.5 transition position-absolute d-flex flex-column justify-content-between overflow-hidden shadow-none"
-                                    style={{
-                                      top: `${topOffset + 2}px`,
-                                      height: `${cardHeight}px`,
-                                      left: `calc(${leftPercent}% + 2px)`,
-                                      width: `calc(${widthPercent}% - 4px)`,
-                                      zIndex: 2,
-                                      backgroundColor: '#f8fafc',
-                                      border: '1.5px dashed #94a3b8',
-                                      color: '#475569',
-                                    }}
-                                    title={`Occupied Room: ${room?.name || 'TBA'}\nCohort: ${otherBlock ? formatBlockLabel(otherBlock) : 'Other Block'}\nCourse: ${subject?.code} - ${subject?.title}\nInstructor: ${instructor?.full_name || 'TBA'}\nTime: ${formatTimeShort(e.start_time)} - ${formatTimeShort(e.end_time)}`}
-                                  >
-                                    <div>
-                                      <div className="d-flex align-items-center justify-content-between gap-1 mb-0.5">
-                                        <span className="badge bg-secondary-subtle text-secondary border border-secondary-subtle text-truncate fw-semibold" style={{ fontSize: '8px', padding: '1px 3px' }}>
-                                          {otherBlock ? formatBlockLabel(otherBlock) : 'Other Block'}
-                                        </span>
-                                        <span className="badge bg-warning-subtle text-dark border border-warning-subtle fw-bold" style={{ fontSize: '8px', padding: '1px 3px' }}>
-                                          📍 {room?.name || 'Room'}
-                                        </span>
-                                      </div>
-                                      <div className="fw-semibold text-dark text-truncate" style={{ fontSize: '9.5px' }}>
-                                        {subject?.code || 'Course'}
-                                      </div>
-                                      <div className="text-secondary text-truncate" style={{ fontSize: '8.5px' }}>
-                                        {instructor?.full_name}
-                                      </div>
-                                    </div>
-                                    <div className="mt-auto pt-0.5 border-top border-light-subtle d-flex align-items-center justify-content-between">
-                                      <span className="font-monospace text-muted" style={{ fontSize: '8px' }}>
-                                        {formatTimeShort(e.start_time)}-{formatTimeShort(e.end_time)}
-                                      </span>
-                                      <span className="badge bg-light text-muted border" style={{ fontSize: '7.5px', padding: '1px 2px' }}>
-                                        Occupied
-                                      </span>
-                                    </div>
-                                  </div>
-                                );
-                              }
-
-                              return (
-                                <div
-                                  key={e.id}
-                                  className={`rounded-3 p-2 transition position-absolute shadow-sm d-flex flex-column justify-content-between overflow-hidden ${
-                                    isHighlighted
-                                      ? 'border-2 border-primary shadow'
-                                      : ''
-                                  } ${
-                                    entryViolations && entryViolations.hard.length > 0
-                                      ? 'bg-danger-subtle border border-danger text-danger'
-                                      : entryViolations && entryViolations.soft.length > 0
-                                      ? 'bg-warning-subtle border border-warning text-dark'
-                                      : e.session_type === 'lab'
-                                      ? 'bg-info-subtle border border-info-subtle text-dark'
-                                      : 'bg-white border border-light-subtle text-dark'
-                                  }`}
-                                  style={{
-                                    top: `${topOffset + 2}px`,
-                                    height: `${cardHeight}px`,
-                                    left: `calc(${leftPercent}% + 3px)`,
-                                    width: `calc(${widthPercent}% - 6px)`,
-                                    zIndex: isHighlighted ? 10 : 3,
-                                  }}
-                                >
-                                  {/* Header: Subject & Session Type & AI Tag */}
-                                  <div>
-                                    <div className="d-flex align-items-center justify-content-between gap-1 mb-0.5">
-                                      <div className="d-flex align-items-center gap-1 text-truncate">
-                                        <span className="fw-bold text-dark text-truncate" style={{ fontSize: '11px' }}>
-                                          {subject?.code || 'Course'}
-                                        </span>
-                                        {e.created_by_ai && (
-                                          <span className="badge bg-primary-subtle text-primary border" style={{ fontSize: '8.5px', padding: '1px 3px' }}>
-                                            AI
-                                          </span>
-                                        )}
-                                        {(e as any).notes && (
-                                          <span
-                                            className="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle cursor-pointer d-inline-flex align-items-center gap-0.5"
-                                            style={{ fontSize: '8.5px', padding: '1px 4px' }}
-                                            title={`Note: ${(e as any).notes}`}
-                                            onClick={(ev) => {
-                                              ev.stopPropagation();
-                                              alert(`Scheduler Note for ${subject?.code || 'Course'}:\n\n${(e as any).notes}`);
-                                            }}
-                                          >
-                                            <i className="bi bi-sticky-fill text-warning"></i>
-                                            <span>Note</span>
-                                          </span>
-                                        )}
-                                      </div>
-                                      <span
-                                        className={`badge ${
-                                          e.session_type === 'lab'
-                                            ? 'bg-info-subtle text-info border'
-                                            : 'bg-light text-secondary border'
-                                        }`}
-                                        style={{ fontSize: '8.5px', padding: '1px 3px' }}
-                                      >
-                                        {e.session_type}
-                                      </span>
-                                    </div>
-
-                                    {/* Room & Instructor */}
-                                    <div className="text-secondary text-truncate" style={{ fontSize: '10px' }}>
-                                      {e.room_id ? room?.name : <span className="fst-italic text-muted">No room / off-site</span>}
-                                    </div>
-                                    <div className="text-muted text-truncate" style={{ fontSize: '10px' }}>
-                                      {instructor?.full_name}
-                                    </div>
-
-                                    {/* Inline Violation Badges */}
-                                    {entryViolations && entryViolations.hard.length > 0 && (
-                                      <div className="mt-0.5 pt-0.5 border-top border-danger border-opacity-25">
-                                        <span className="fw-bold text-danger text-truncate d-block" style={{ fontSize: '9px' }}>
-                                          <i className="bi bi-exclamation-octagon-fill me-1"></i>
-                                          {entryViolations.hard[0].rule.replace('_', ' ')}
-                                        </span>
-                                      </div>
-                                    )}
-
-                                    {entryViolations && entryViolations.soft.length > 0 && !entryViolations.hard.length && (
-                                      <div className="mt-0.5 pt-0.5 border-top border-warning border-opacity-50">
-                                        <span className="fw-bold text-warning text-truncate d-block" style={{ fontSize: '9px' }}>
-                                          <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                                          {entryViolations.soft[0].rule.replace('_', ' ')}
-                                        </span>
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  {/* Time & Action buttons at bottom */}
-                                  <div className="mt-auto pt-1 d-flex align-items-center justify-content-between border-top border-light-subtle">
-                                    <div className="text-muted font-monospace" style={{ fontSize: '9.5px' }}>
-                                      {formatTimeShort(e.start_time)} - {formatTimeShort(e.end_time)}
-                                    </div>
-
-                                    {!isReadOnly && (
-                                      <div className="d-flex align-items-center gap-1">
-                                        <button
-                                          onClick={(ev) => {
-                                            ev.stopPropagation();
-                                            handleOpenEdit(e);
-                                          }}
-                                          className="btn btn-outline-secondary btn-sm py-0 px-1"
-                                          style={{ fontSize: '9.5px', lineHeight: '1.2' }}
-                                        >
-                                          Edit
-                                        </button>
-                                        <button
-                                          onClick={(ev) => {
-                                            ev.stopPropagation();
-                                            handleDelete(e.id);
-                                          }}
-                                          className="btn btn-outline-danger btn-sm py-0 px-1"
-                                          style={{ fontSize: '9.5px', lineHeight: '1.2' }}
-                                        >
-                                          Del
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <WeeklyTimetableGrid
+              selectedBlock={selectedBlock}
+              selectedBlockId={selectedBlockId}
+              selectedBlockEntries={selectedBlockEntries}
+              offerings={initialOfferings}
+              blocks={blocks}
+              subjects={subjects}
+              instructors={instructors}
+              rooms={rooms}
+              isReadOnly={isReadOnly}
+              zoomDensity={zoomDensity}
+              violationsByEntryId={violationsByEntryId}
+              highlightedEntryId={highlightedEntryId}
+              dragOverSlot={dragOverSlot}
+              activeDragContext={activeDragContext}
+              draggingEntryId={draggingEntryId}
+              draggingOfferingId={draggingOfferingId}
+              setDragOverSlot={setDragOverSlot}
+              setDraggingEntryId={setDraggingEntryId}
+              setDraggingOfferingId={setDraggingOfferingId}
+              onMoveEntryOnGrid={handleMoveEntryOnGrid}
+              onDropOnGrid={handleDropOnGrid}
+              onEditEntry={handleOpenEdit}
+              onDeleteEntry={handleDelete}
+              getSlotConflicts={getSlotConflicts}
+              isSubjectAllowed={isSubjectAllowed}
+              isSubjectUnspecified={isSubjectUnspecified}
+              formatBlockLabel={formatBlockLabel}
+            />
           )}
         </div>
 
@@ -2617,18 +3396,26 @@ export function ScheduleEditorClient({
           </div>
 
           {!isReadOnly && (
+            <Link
+              href={`/scheduler/generate?termId=${currentTermId}${(!showMasterlist && selectedBlockId) ? `&blockId=${selectedBlockId}` : (showMasterlist && masterlistBlockFilter && masterlistBlockFilter !== 'all') ? `&blockId=${masterlistBlockFilter}` : ''}`}
+              className="btn-ref-primary small py-2 px-3 d-flex align-items-center gap-1.5 text-decoration-none"
+              title="Open Schedule Generator to configure filters and run algorithm"
+            >
+              <i className="bi bi-cpu"></i>
+              <span>Generate Schedule</span>
+            </Link>
+          )}
+
+          {!isReadOnly && entries.length > 0 && (
             <button
               type="button"
-              onClick={() => {
-                setAiScope('all');
-                setIsAiModalOpen(true);
-              }}
-              disabled={isPending || isAiDrafting}
-              className="btn-ref-primary small py-2 px-3 d-flex align-items-center gap-1.5"
-              title="Auto-generate complete timetable with AI"
+              onClick={() => setIsConfirmClearAllOpen(true)}
+              disabled={isPending || isClearingAll}
+              className="btn btn-sm btn-outline-danger py-2 px-3 rounded-pill d-flex align-items-center gap-1.5 fw-semibold shadow-xs"
+              title={userRole === 'admin' ? 'Clear all scheduled classes across all cohorts in this draft' : `Clear scheduled classes in ${schedulerDepartment || 'your department'} scope`}
             >
-              <i className="bi bi-stars"></i>
-              <span>AI Auto-Schedule</span>
+              <i className="bi bi-trash3"></i>
+              <span>{userRole === 'admin' ? 'Clear All Schedules' : 'Clear Scope Schedules'}</span>
             </button>
           )}
 
@@ -2710,136 +3497,134 @@ export function ScheduleEditorClient({
 
       {/* Year Level Groupings with Interactive Block Cards */}
       <div className="space-y-4">
-        {yearLevelGroups.map((group) => (
-          <div key={group.title} className="bg-white rounded-5 p-4 shadow-sm border border-light-subtle">
-            <div className="d-flex align-items-center justify-content-between mb-3 pb-2 border-bottom border-light">
-              <div className="d-flex align-items-center gap-2">
-                <span className="badge rounded-circle p-1.5" style={{ backgroundColor: '#0E0AB8' }}></span>
-                <h5 className="fw-bold text-dark mb-0">
-                  {group.title}
-                </h5>
-                <span className="badge bg-light text-secondary border rounded-pill px-2.5 py-1 small">
-                  {group.blocks.length} {group.blocks.length === 1 ? 'Block' : 'Blocks'}
+        {yearLevelGroups.map((group) => {
+          const isHsGroup = Boolean(group.isHighSchool);
+          return (
+            <div
+              key={group.title}
+              className={`bg-white rounded-5 p-4 shadow-sm border ${
+                isHsGroup ? 'border-success border-opacity-25' : 'border-light-subtle'
+              }`}
+            >
+              <div className="d-flex align-items-center justify-content-between mb-3 pb-2 border-bottom border-light">
+                <div className="d-flex align-items-center gap-2">
+                  <span
+                    className="badge rounded-circle p-1.5"
+                    style={{ backgroundColor: isHsGroup ? '#16a34a' : '#0E0AB8' }}
+                  ></span>
+                  <h5 className="fw-bold text-dark mb-0">
+                    {group.title}
+                  </h5>
+                  <span
+                    className={`badge rounded-pill px-2.5 py-1 small ${
+                      isHsGroup
+                        ? 'bg-success-subtle text-success border border-success-subtle fw-semibold'
+                        : 'bg-light text-secondary border'
+                    }`}
+                  >
+                    {isHsGroup ? 'High School Department' : `${group.blocks.length} ${group.blocks.length === 1 ? 'Block' : 'Blocks'}`}
+                  </span>
+                </div>
+                <span className="text-muted small">
+                  Click any block to open its weekly schedule &amp; spreadsheet
                 </span>
               </div>
-              <span className="text-muted small">
-                Click any block to open its weekly schedule &amp; spreadsheet
-              </span>
-            </div>
 
-            <div className="row g-3">
-              {group.blocks.map((bs) => {
-                const b = bs.block;
-                const pct = bs.offeringsCount > 0
-                  ? Math.round((bs.scheduledCount / bs.offeringsCount) * 100)
-                  : 0;
+              <div className="row g-3">
+                {group.blocks.map((bs) => {
+                  const b = bs.block;
+                  const pct = bs.offeringsCount > 0
+                    ? Math.round((bs.scheduledCount / bs.offeringsCount) * 100)
+                    : 0;
 
-                return (
-                  <div key={b.id} className="col-12 col-md-6 col-xl-3">
-                    <div
-                      onClick={() => handleSelectBlock(b.id)}
-                      className="p-3.5 rounded-4 border transition h-100 d-flex flex-column justify-content-between shadow-xs"
-                      style={{
-                        cursor: 'pointer',
-                        borderColor: '#e2e8f0',
-                        backgroundColor: '#ffffff',
-                        transition: 'all 0.18s ease-in-out',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.borderColor = '#0E0AB8';
-                        e.currentTarget.style.transform = 'translateY(-3px)';
-                        e.currentTarget.style.boxShadow = '0 10px 20px rgba(14, 10, 184, 0.08)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.borderColor = '#e2e8f0';
-                        e.currentTarget.style.transform = 'none';
-                        e.currentTarget.style.boxShadow = '';
-                      }}
-                    >
-                      <div>
-                        {/* Top Header of Card */}
-                        <div className="d-flex align-items-start justify-content-between gap-2 mb-2">
-                          <div>
+                  return (
+                    <div key={b.id} className="col-12 col-md-6 col-xl-3">
+                      <div
+                        onClick={() => handleSelectBlock(b.id)}
+                        className="p-3.5 rounded-4 border transition h-100 d-flex flex-column justify-content-between shadow-xs"
+                        style={{
+                          cursor: 'pointer',
+                          borderColor: isHsGroup ? '#bbf7d0' : '#e2e8f0',
+                          backgroundColor: '#ffffff',
+                          transition: 'all 0.18s ease-in-out',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = isHsGroup ? '#16a34a' : '#0E0AB8';
+                          e.currentTarget.style.transform = 'translateY(-3px)';
+                          e.currentTarget.style.boxShadow = isHsGroup
+                            ? '0 10px 20px rgba(22, 163, 74, 0.12)'
+                            : '0 10px 20px rgba(14, 10, 184, 0.08)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = isHsGroup ? '#bbf7d0' : '#e2e8f0';
+                          e.currentTarget.style.transform = 'none';
+                          e.currentTarget.style.boxShadow = '';
+                        }}
+                      >
+                        <div>
+                          {/* Top Header of Card */}
+                          <div className="d-flex align-items-center justify-content-between gap-2 mb-3">
                             <h5 className="fw-bold text-dark mb-0">
                               {formatBlockLabel(b)}
                             </h5>
-                            <span className="text-muted small" style={{ fontSize: '11px' }}>
-                              {b.programs?.code || 'BSIT'} &bull; {b.student_count || 0} Students
-                            </span>
+
+                            {/* Status Badge */}
+                            {bs.isComplete ? (
+                              <span className="badge bg-success-subtle text-success border border-success-subtle" style={{ fontSize: '10px' }}>
+                                <i className="bi bi-check-circle-fill me-1"></i>Complete
+                              </span>
+                            ) : bs.hardCount > 0 ? (
+                              <span className="badge bg-danger-subtle text-danger border border-danger-subtle" style={{ fontSize: '10px' }}>
+                                <i className="bi bi-exclamation-octagon-fill me-1"></i>{bs.hardCount} Conflicts
+                              </span>
+                            ) : bs.unscheduledCount > 0 ? (
+                              <span className="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle" style={{ fontSize: '10px' }}>
+                                <i className="bi bi-clock-history me-1"></i>{bs.unscheduledCount} Left
+                              </span>
+                            ) : (
+                              <span className="badge bg-secondary-subtle text-secondary" style={{ fontSize: '10px' }}>
+                                No Classes
+                              </span>
+                            )}
                           </div>
 
-                          {/* Status Badge */}
-                          {bs.isComplete ? (
-                            <span className="badge bg-success-subtle text-success border border-success-subtle" style={{ fontSize: '10px' }}>
-                              <i className="bi bi-check-circle-fill me-1"></i>Complete
-                            </span>
-                          ) : bs.hardCount > 0 ? (
-                            <span className="badge bg-danger-subtle text-danger border border-danger-subtle" style={{ fontSize: '10px' }}>
-                              <i className="bi bi-exclamation-octagon-fill me-1"></i>{bs.hardCount} Conflicts
-                            </span>
-                          ) : bs.unscheduledCount > 0 ? (
-                            <span className="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle" style={{ fontSize: '10px' }}>
-                              <i className="bi bi-clock-history me-1"></i>{bs.unscheduledCount} Left
-                            </span>
-                          ) : (
-                            <span className="badge bg-secondary-subtle text-secondary" style={{ fontSize: '10px' }}>
-                              No Classes
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div className="mb-3">
-                          <div className="d-flex align-items-center justify-content-between small text-muted mb-1" style={{ fontSize: '11px' }}>
-                            <span>Curriculum Placement</span>
-                            <span className="fw-bold text-dark">{bs.scheduledCount}/{bs.offeringsCount} ({pct}%)</span>
-                          </div>
-                          <div className="progress" style={{ height: '6px' }}>
-                            <div
-                              className={`progress-bar ${pct === 100 ? 'bg-success' : pct > 0 ? 'bg-primary' : 'bg-secondary'}`}
-                              role="progressbar"
-                              style={{ width: `${pct}%` }}
-                              aria-valuenow={pct}
-                              aria-valuemin={0}
-                              aria-valuemax={100}
-                            ></div>
+                          {/* Progress Bar */}
+                          <div className="mb-3">
+                            <div className="d-flex align-items-center justify-content-between small text-muted mb-1" style={{ fontSize: '11px' }}>
+                              <span>Curriculum Placement</span>
+                              <span className="fw-bold text-dark">{bs.scheduledCount}/{bs.offeringsCount} ({pct}%)</span>
+                            </div>
+                            <div className="progress" style={{ height: '6px' }}>
+                              <div
+                                className={`progress-bar ${pct === 100 ? 'bg-success' : pct > 0 ? (isHsGroup ? 'bg-success' : 'bg-primary') : 'bg-secondary'}`}
+                                role="progressbar"
+                                style={{ width: `${pct}%`, ...(isHsGroup && pct > 0 && pct < 100 ? { backgroundColor: '#16a34a' } : {}) }}
+                                aria-valuenow={pct}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                              ></div>
+                            </div>
                           </div>
                         </div>
 
-                        {/* Quick Meta Data Grid */}
-                        <div className="p-2.5 bg-light rounded-3 small space-y-1.5 mb-3" style={{ fontSize: '11px' }}>
-                          <div className="d-flex align-items-center justify-content-between text-secondary">
-                            <span>Weekly Load:</span>
-                            <strong className="text-dark">{bs.totalHours} hrs / wk</strong>
-                          </div>
-                          <div className="d-flex align-items-center justify-content-between text-secondary">
-                            <span>Schedule Days:</span>
-                            <strong className="text-dark">{bs.dayPattern}</strong>
-                          </div>
-                          <div className="d-flex align-items-center justify-content-between text-secondary">
-                            <span>Classrooms:</span>
-                            <span className="text-dark text-truncate text-end ms-2" style={{ maxWidth: '120px' }}>
-                              {bs.roomNames.length > 0 ? bs.roomNames.join(', ') : 'None assigned'}
-                            </span>
-                          </div>
-                        </div>
+                        {/* Action Button */}
+                        <button
+                          type="button"
+                          className={`btn btn-sm ${
+                            isHsGroup ? 'btn-outline-success' : 'btn-outline-primary'
+                          } w-100 d-flex align-items-center justify-content-center gap-1.5 fw-semibold py-1.5 rounded-3`}
+                        >
+                          <span>Open Schedule Editor</span>
+                          <i className="bi bi-arrow-right"></i>
+                        </button>
                       </div>
-
-                      {/* Action Button */}
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline-primary w-100 d-flex align-items-center justify-content-center gap-1.5 fw-semibold py-1.5 rounded-3"
-                      >
-                        <span>Open Schedule Editor</span>
-                        <i className="bi bi-arrow-right"></i>
-                      </button>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   )}
@@ -2848,12 +3633,12 @@ export function ScheduleEditorClient({
       <FormModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingEntry ? 'Edit Class Schedule Entry' : 'Add Class Schedule Entry'}
+        title={editingEntry ? 'Edit Class Schedule Entry' : (modalError ? 'Edit Class Schedule Entry' : 'Add Class Schedule Entry')}
         description="Assign schedule timing, subject, room, and faculty member following the spreadsheet program layout."
         onSubmit={handleSubmit}
         isSubmitting={isPending}
         error={modalError}
-        submitLabel={editingEntry ? 'Update Entry' : 'Create Entry'}
+        submitLabel={editingEntry ? 'Update Entry' : 'Save Entry'}
         size="xl"
       >
         <div className="row g-4">
@@ -2868,132 +3653,302 @@ export function ScheduleEditorClient({
                 <span>1. Schedule & Time</span>
               </div>
 
-              {/* Day Pattern Selector (for new entries) */}
-              {!editingEntry && (
-                <div className="mb-3">
-                  <label className="form-label small fw-semibold text-secondary">
-                    Schedule Day Pattern
-                  </label>
-                  <div className="d-flex gap-1 p-1 bg-white rounded-3 border">
-                    <button
-                      type="button"
-                      onClick={() => setScheduleDayPattern('single')}
-                      className={`btn btn-sm flex-fill rounded-2 border-0 fw-semibold text-xs py-1.5 ${
-                        scheduleDayPattern === 'single'
-                          ? 'bg-primary text-white shadow-sm'
-                          : 'text-secondary hover:text-dark'
-                      }`}
+              {/* Day Pattern Selector (Single Day, MW, TTH) */}
+              <div className="mb-3">
+                <label className="form-label small fw-semibold text-secondary mb-1">
+                  Schedule Day Pattern
+                </label>
+                <div className="d-flex gap-1 p-1 bg-white rounded-3 border">
+                  <button
+                    type="button"
+                    onClick={() => handlePatternChange('single')}
+                    className={`btn btn-sm flex-fill rounded-2 border-0 fw-semibold text-xs py-1.5 ${
+                      scheduleDayPattern === 'single'
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-secondary hover:text-dark'
+                    }`}
+                  >
+                    Single Day
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePatternChange('MW')}
+                    className={`btn btn-sm flex-fill rounded-2 border-0 fw-semibold text-xs py-1.5 ${
+                      scheduleDayPattern === 'MW'
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-secondary hover:text-dark'
+                    }`}
+                  >
+                    MW (Mon/Wed)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handlePatternChange('TTH')}
+                    className={`btn btn-sm flex-fill rounded-2 border-0 fw-semibold text-xs py-1.5 ${
+                      scheduleDayPattern === 'TTH'
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-secondary hover:text-dark'
+                    }`}
+                  >
+                    TTH (Tue/Thu)
+                  </button>
+                </div>
+              </div>
+
+              {/* Two Sessions Display (e.g. Lec + Lab or MW / TTH split) */}
+              {hasSecondSession ? (
+                <>
+                  {/* Session 1 Card */}
+                  <div className="p-3 bg-white rounded-3 border mb-3 shadow-xs">
+                    <div className="d-flex align-items-center justify-content-between mb-2">
+                      <span className="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1 fw-bold text-xs">
+                        Session 1 {scheduleDayPattern === 'MW' ? '(Monday)' : scheduleDayPattern === 'TTH' ? '(Tuesday)' : `(${formData.session_type === 'lecture' ? 'Lecture' : 'Lab'})`}
+                      </span>
+                      {scheduleDayPattern === 'single' && (
+                        <select
+                          value={formData.session_type}
+                          onChange={(e) => {
+                            const st = e.target.value as 'lecture' | 'lab';
+                            const curOff = initialOfferings.find((o) => o.id === formData.offering_id);
+                            const curSub = subjects.find((s) => s.id === curOff?.subject_id);
+                            const dur = getSubjectSessionDurationMinutes(curSub, st, scheduleDayPattern);
+                            setFormData((prev) => ({
+                              ...prev,
+                              session_type: st,
+                              end_time: calculateEndTime(prev.start_time, dur),
+                            }));
+                          }}
+                          className="form-select form-select-sm py-0 px-2 text-xs w-auto border-light-subtle"
+                        >
+                          <option value="lecture">Lecture</option>
+                          <option value="lab">Lab</option>
+                        </select>
+                      )}
+                    </div>
+
+                    {scheduleDayPattern === 'single' && (
+                      <div className="mb-2">
+                        <label className="form-label text-muted text-xs mb-1">Day of Week</label>
+                        <select
+                          value={formData.day_of_week}
+                          onChange={(e) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              day_of_week: parseInt(e.target.value, 10),
+                            }))
+                          }
+                          className="form-select form-select-sm ref-form-control bg-white"
+                        >
+                          {DAYS.map((d) => (
+                            <option key={d.index} value={d.index}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="row g-2">
+                      <div className="col-6">
+                        <label className="form-label text-muted text-xs mb-1">Start Time</label>
+                        <RadialTimePicker
+                          value={formData.start_time}
+                          onChange={handleSession1StartChange}
+                        />
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label text-muted text-xs mb-1">End Time</label>
+                        <RadialTimePicker
+                          value={formData.end_time}
+                          onChange={(newEnd) =>
+                            setFormData((prev) => ({ ...prev, end_time: newEnd }))
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sync sessions toggle */}
+                  <div className="d-flex align-items-center justify-content-between px-1 mb-2">
+                    <div className="form-check form-switch mb-0">
+                      <input
+                        className="form-check-input"
+                        type="checkbox"
+                        role="switch"
+                        id="syncTimesSwitch"
+                        checked={syncSessionsTime}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSyncSessionsTime(checked);
+                          if (checked) {
+                            handleSession1StartChange(formData.start_time);
+                          }
+                        }}
+                      />
+                      <label
+                        className="form-check-label text-secondary small text-xs"
+                        htmlFor="syncTimesSwitch"
+                        style={{ cursor: 'pointer' }}
+                      >
+                        Lock &amp; sync start times
+                      </label>
+                    </div>
+                    <span className="text-muted text-xs">
+                      {scheduleDayPattern === 'MW'
+                        ? 'Mon & Wed'
+                        : scheduleDayPattern === 'TTH'
+                        ? 'Tue & Thu'
+                        : 'Paired Sessions'}
+                    </span>
+                  </div>
+
+                  {/* Session 2 Card */}
+                  <div className="p-3 bg-white rounded-3 border mb-2 shadow-xs">
+                    <div className="d-flex align-items-center justify-content-between mb-2">
+                      <span className="badge bg-info-subtle text-info border border-info-subtle px-2 py-1 fw-bold text-xs">
+                        Session 2 {scheduleDayPattern === 'MW' ? '(Wednesday)' : scheduleDayPattern === 'TTH' ? '(Thursday)' : `(${session2Data.session_type === 'lab' ? 'Laboratory' : 'Lecture'})`}
+                      </span>
+                      {scheduleDayPattern === 'single' && (
+                        <select
+                          value={session2Data.session_type}
+                          onChange={(e) => {
+                            const st = e.target.value as 'lecture' | 'lab';
+                            const curOff = initialOfferings.find((o) => o.id === formData.offering_id);
+                            const curSub = subjects.find((s) => s.id === curOff?.subject_id);
+                            const dur = getSubjectSessionDurationMinutes(curSub, st, scheduleDayPattern);
+                            setSession2Data((prev) => ({
+                              ...prev,
+                              session_type: st,
+                              end_time: calculateEndTime(prev.start_time, dur),
+                            }));
+                          }}
+                          className="form-select form-select-sm py-0 px-2 text-xs w-auto border-light-subtle"
+                        >
+                          <option value="lab">Lab</option>
+                          <option value="lecture">Lecture</option>
+                        </select>
+                      )}
+                    </div>
+
+                    {scheduleDayPattern === 'single' && (
+                      <div className="mb-2">
+                        <label className="form-label text-muted text-xs mb-1">Day of Week</label>
+                        <select
+                          value={session2Data.day_of_week}
+                          onChange={(e) =>
+                            setSession2Data((prev) => ({
+                              ...prev,
+                              day_of_week: parseInt(e.target.value, 10),
+                            }))
+                          }
+                          className="form-select form-select-sm ref-form-control bg-white"
+                        >
+                          {DAYS.map((d) => (
+                            <option key={d.index} value={d.index}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="row g-2">
+                      <div className="col-6">
+                        <label className="form-label text-muted text-xs mb-1">Start Time</label>
+                        <RadialTimePicker
+                          value={session2Data.start_time}
+                          onChange={handleSession2StartChange}
+                          disabled={syncSessionsTime}
+                        />
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label text-muted text-xs mb-1">End Time</label>
+                        <RadialTimePicker
+                          value={session2Data.end_time}
+                          onChange={(newEnd) =>
+                            setSession2Data((prev) => ({ ...prev, end_time: newEnd }))
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                /* Single Session Display */
+                <div className="p-3 bg-white rounded-3 border mb-2 shadow-xs">
+                  {/* Day of Week */}
+                  <div className="mb-3">
+                    <label className="form-label small fw-semibold text-secondary">
+                      Day of Week
+                    </label>
+                    <select
+                      value={formData.day_of_week}
+                      onChange={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          day_of_week: parseInt(e.target.value, 10),
+                        }))
+                      }
+                      className="form-select ref-form-control bg-white"
                     >
-                      Single Day
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setScheduleDayPattern('MW')}
-                      className={`btn btn-sm flex-fill rounded-2 border-0 fw-semibold text-xs py-1.5 ${
-                        scheduleDayPattern === 'MW'
-                          ? 'bg-primary text-white shadow-sm'
-                          : 'text-secondary hover:text-dark'
-                      }`}
+                      {DAYS.map((d) => (
+                        <option key={d.index} value={d.index}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Session Type */}
+                  <div className="mb-3">
+                    <label className="form-label small fw-semibold text-secondary">
+                      Session Type
+                    </label>
+                    <select
+                      value={formData.session_type}
+                      onChange={(e) => {
+                        const st = e.target.value as 'lecture' | 'lab';
+                        const curOff = initialOfferings.find((o) => o.id === formData.offering_id);
+                        const curSub = subjects.find((s) => s.id === curOff?.subject_id);
+                        const dur = getSubjectSessionDurationMinutes(curSub, st, scheduleDayPattern);
+                        setFormData((prev) => ({
+                          ...prev,
+                          session_type: st,
+                          end_time: calculateEndTime(prev.start_time, dur),
+                        }));
+                      }}
+                      className="form-select ref-form-control bg-white"
                     >
-                      MW (Mon/Wed)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setScheduleDayPattern('TTH')}
-                      className={`btn btn-sm flex-fill rounded-2 border-0 fw-semibold text-xs py-1.5 ${
-                        scheduleDayPattern === 'TTH'
-                          ? 'bg-primary text-white shadow-sm'
-                          : 'text-secondary hover:text-dark'
-                      }`}
-                    >
-                      TTH (Tue/Thu)
-                    </button>
+                      <option value="lecture">Lecture Session</option>
+                      <option value="lab">Laboratory Session</option>
+                    </select>
+                  </div>
+
+                  {/* Start & End Time */}
+                  <div className="row g-2">
+                    <div className="col-6">
+                      <label className="form-label small fw-semibold text-secondary">
+                        Start Time
+                      </label>
+                      <RadialTimePicker
+                        value={formData.start_time}
+                        onChange={handleSession1StartChange}
+                      />
+                    </div>
+                    <div className="col-6">
+                      <label className="form-label small fw-semibold text-secondary">
+                        End Time
+                      </label>
+                      <RadialTimePicker
+                        value={formData.end_time}
+                        onChange={(newEnd) =>
+                          setFormData((prev) => ({ ...prev, end_time: newEnd }))
+                        }
+                      />
+                    </div>
                   </div>
                 </div>
               )}
-
-              {/* Day of Week */}
-              {scheduleDayPattern === 'single' || editingEntry ? (
-                <div className="mb-3">
-                  <label className="form-label small fw-semibold text-secondary">
-                    Day of Week
-                  </label>
-                  <select
-                    value={formData.day_of_week}
-                    onChange={(e) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        day_of_week: parseInt(e.target.value, 10),
-                      }))
-                    }
-                    className="form-select ref-form-control bg-white"
-                  >
-                    {DAYS.map((d) => (
-                      <option key={d.index} value={d.index}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="alert alert-primary py-2 px-3 small rounded-3 mb-3 text-xs">
-                  <i className="bi bi-calendar2-week me-1"></i>
-                  Creates synchronized split sessions on both{' '}
-                  <strong>{scheduleDayPattern === 'MW' ? 'Monday & Wednesday' : 'Tuesday & Thursday'}</strong>.
-                </div>
-              )}
-
-              {/* Session Type */}
-              <div className="mb-3">
-                <label className="form-label small fw-semibold text-secondary">
-                  Session Type
-                </label>
-                <select
-                  value={formData.session_type}
-                  onChange={(e) =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      session_type: e.target.value as 'lecture' | 'lab',
-                    }))
-                  }
-                  className="form-select ref-form-control bg-white"
-                >
-                  <option value="lecture">Lecture Session</option>
-                  <option value="lab">Laboratory Session</option>
-                </select>
-              </div>
-
-              {/* Start & End Time */}
-              <div className="row g-2">
-                <div className="col-6">
-                  <label className="form-label small fw-semibold text-secondary">
-                    Start Time
-                  </label>
-                  <input
-                    type="time"
-                    required
-                    value={formData.start_time}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, start_time: e.target.value }))
-                    }
-                    className="form-control ref-form-control bg-white"
-                  />
-                </div>
-                <div className="col-6">
-                  <label className="form-label small fw-semibold text-secondary">
-                    End Time
-                  </label>
-                  <input
-                    type="time"
-                    required
-                    value={formData.end_time}
-                    onChange={(e) =>
-                      setFormData((prev) => ({ ...prev, end_time: e.target.value }))
-                    }
-                    className="form-control ref-form-control bg-white"
-                  />
-                </div>
-              </div>
             </div>
           </div>
 
@@ -3022,10 +3977,30 @@ export function ScheduleEditorClient({
                     const qualInst = instructors.find((inst) =>
                       (inst.instructor_qualifications || []).some((q) => q.subject_id === targetSub?.id)
                     );
+                    const isPairCourse =
+                      (targetSub?.lecture_hours === 1.5 && targetSub?.lab_hours === 1.5) ||
+                      targetSub?.lecture_hours === 3;
+                    const pat = isPairCourse ? 'MW' : scheduleDayPattern;
+                    const has2 = Boolean(
+                      (targetSub && targetSub.lecture_hours > 0 && targetSub.lab_hours > 0) ||
+                      pat !== 'single'
+                    );
+                    setScheduleDayPattern(pat);
+                    setHasSecondSession(has2);
+                    const dur1 = getSubjectSessionDurationMinutes(targetSub, 'lecture', pat);
+                    const dur2 = getSubjectSessionDurationMinutes(targetSub, targetSub?.requires_lab ? 'lab' : 'lecture', pat);
+                    const sTime = formData.start_time || '08:00';
                     setFormData((prev) => ({
                       ...prev,
                       offering_id: newOffId,
-                      instructor_id: qualInst?.id || '',
+                      instructor_id: qualInst?.id || prev.instructor_id,
+                      end_time: calculateEndTime(sTime, dur1),
+                    }));
+                    setSession2Data((prev) => ({
+                      ...prev,
+                      instructor_id: qualInst?.id || prev.instructor_id,
+                      start_time: sTime,
+                      end_time: calculateEndTime(sTime, dur2),
                     }));
                   }}
                   className="form-select ref-form-control bg-white"
@@ -3076,99 +4051,399 @@ export function ScheduleEditorClient({
                 <span>3. Room & Teacher</span>
               </div>
 
-              {/* Room & Facility */}
-              <div className="mb-3">
-                <div className="d-flex align-items-center justify-content-between mb-1">
-                  <label className="form-label small fw-semibold text-secondary mb-0">
-                    Classroom / Laboratory
-                  </label>
-                  <div className="form-check form-check-inline mb-0">
-                    <input
-                      className="form-check-input"
-                      type="checkbox"
-                      id="noRoomCheck"
-                      checked={isNoRoom}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setIsNoRoom(checked);
-                        if (checked) {
-                          setFormData((prev) => ({ ...prev, room_id: '' }));
-                        } else {
-                          setFormData((prev) => ({ ...prev, room_id: rooms[0]?.id || '' }));
-                        }
-                      }}
-                    />
-                    <label className="form-check-label small text-secondary" htmlFor="noRoomCheck" style={{ fontSize: '12px', cursor: 'pointer' }}>
-                      No room / off-site
-                    </label>
-                  </div>
-                </div>
-                <select
-                  disabled={isNoRoom}
-                  value={isNoRoom ? '' : (formData.room_id || rooms[0]?.id || '')}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, room_id: e.target.value }))
-                  }
-                  className="form-select ref-form-control bg-white"
-                >
-                  {isNoRoom ? (
-                    <option value="">(No facility required &mdash; off-site session)</option>
-                  ) : (
-                    rooms.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name} ({r.room_type}) {r.is_shared ? '[Shared]' : ''}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </div>
-
-              {/* Instructor */}
-              <div className="mb-3">
-                <div className="d-flex align-items-center justify-content-between mb-1">
-                  <label className="form-label small fw-semibold text-secondary mb-0">
-                    Assigned Instructor
-                  </label>
-                  <span className="badge bg-success-subtle text-success border border-success-subtle" style={{ fontSize: '10px' }}>
-                    Qualified Faculty Only
-                  </span>
-                </div>
-                <select
-                  value={formData.instructor_id}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, instructor_id: e.target.value }))
-                  }
-                  required
-                  className="form-select ref-form-control bg-white"
-                >
-                  <option value="" disabled>
-                    -- Select Qualified Faculty --
-                  </option>
-                  {qualifiedInstructors.map((inst) => {
-                    const hasAvail = (inst.instructor_availability || []).some(
-                      (a) =>
-                        a.day_of_week === formData.day_of_week &&
-                        isTimeRangeWithin(formData.start_time, formData.end_time, a.start_time, a.end_time)
-                    );
+              {hasSecondSession ? (
+                <>
+                  {/* Session 1 Room & Teacher */}
+                  {(() => {
+                    const curOff = initialOfferings.find((o) => o.id === (formData.offering_id || availableOfferings[0]?.id));
+                    const curSub = subjects.find((s) => s.id === curOff?.subject_id);
+                    const isUnspecified = isSubjectUnspecified(curSub?.id) || isSubjectUnspecified(curSub?.code);
+                    const naRoomId = '00000000-0000-0000-0000-000000000000';
 
                     return (
-                      <option key={inst.id} value={inst.id}>
-                        {inst.full_name} {hasAvail ? '✓ Available' : '(Check Availability)'}
-                      </option>
+                      <>
+                        <div className="p-3 bg-white rounded-3 border mb-3 shadow-xs">
+                          <div className="d-flex align-items-center justify-content-between mb-2">
+                            <span className="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-0.5 fw-bold text-xs">
+                              Session 1 {scheduleDayPattern === 'MW' ? '(Mon)' : scheduleDayPattern === 'TTH' ? '(Tue)' : `(${formData.session_type === 'lecture' ? 'Lec' : 'Lab'})`}
+                            </span>
+                            {isUnspecified ? (
+                              <span className="badge bg-secondary-subtle text-secondary border px-2 py-0.5" style={{ fontSize: '10px' }}>
+                                Unspecified Room (N/A)
+                              </span>
+                            ) : (
+                              <div className="form-check form-check-inline mb-0">
+                                <input
+                                  className="form-check-input"
+                                  type="checkbox"
+                                  id="noRoomCheck1"
+                                  checked={isNoRoom}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setIsNoRoom(checked);
+                                    if (checked) {
+                                      setFormData((prev) => ({ ...prev, room_id: '' }));
+                                    } else {
+                                      setFormData((prev) => ({
+                                        ...prev,
+                                        room_id: availableRooms[0]?.id || rooms[0]?.id || '',
+                                      }));
+                                    }
+                                  }}
+                                />
+                                <label className="form-check-label text-secondary" htmlFor="noRoomCheck1" style={{ fontSize: '11px', cursor: 'pointer' }}>
+                                  No room / off-site
+                                </label>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mb-2">
+                            <label className="form-label text-muted text-xs mb-1">Classroom / Facility</label>
+                            <select
+                              disabled={isUnspecified || isNoRoom}
+                              value={isUnspecified ? naRoomId : isNoRoom ? '' : (formData.room_id || availableRooms[0]?.id || rooms[0]?.id || '')}
+                              onChange={(e) => setFormData((prev) => ({ ...prev, room_id: e.target.value }))}
+                              className="form-select form-select-sm ref-form-control bg-white"
+                            >
+                              {isUnspecified ? (
+                                <option value={naRoomId}>None (N/A - Unspecified Room)</option>
+                              ) : isNoRoom ? (
+                                <option value="">(Off-site session)</option>
+                              ) : (
+                                availableRooms.map((r) => {
+                                  if (r.name === 'None (N/A)') return null;
+                                  const depts = r.allowed_departments || (r.is_shared ? ['BSIT', 'High School'] : ['BSIT']);
+                                  const isShared = depts.includes('BSIT') && depts.includes('High School');
+                                  const deptTag = isShared ? '[Shared]' : `[${depts.join(', ')}]`;
+                                  const isOcc = entries.some(
+                                    (e) =>
+                                      (!editingEntry || e.id !== editingEntry.id) &&
+                                      e.day_of_week === formData.day_of_week &&
+                                      e.room_id === r.id &&
+                                      timeRangesOverlap(e.start_time, e.end_time, formData.start_time, formData.end_time)
+                                  );
+                                  return (
+                                    <option key={r.id} value={r.id}>
+                                      {r.name} ({r.room_type === 'laboratory' ? 'Lab' : 'Lec'}) {deptTag} {isOcc ? '⚠️ Occupied' : '✓ Available'}
+                                    </option>
+                                  );
+                                })
+                              )}
+                            </select>
+                            {isUnspecified && (
+                              <div className="text-muted fst-italic mt-1" style={{ fontSize: '11px' }}>
+                                <i className="bi bi-info-circle me-1"></i>
+                                This subject is configured with an unspecified room and never takes any classroom facility.
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="form-label text-muted text-xs mb-1">Assigned Instructor</label>
+                            <select
+                              value={formData.instructor_id}
+                              onChange={(e) => setFormData((prev) => ({ ...prev, instructor_id: e.target.value }))}
+                              required
+                              className="form-select form-select-sm ref-form-control bg-white"
+                            >
+                              <option value="" disabled>-- Select Faculty --</option>
+                              {qualifiedInstructors.map((inst) => {
+                                const isBusy = entries.some(
+                                  (e) =>
+                                    (!editingEntry || e.id !== editingEntry.id) &&
+                                    e.day_of_week === formData.day_of_week &&
+                                    e.instructor_id === inst.id &&
+                                    timeRangesOverlap(e.start_time, e.end_time, formData.start_time, formData.end_time)
+                                );
+                                const hasAvail = (inst.instructor_availability || []).some(
+                                  (a) =>
+                                    a.day_of_week === formData.day_of_week &&
+                                    isTimeRangeWithin(formData.start_time, formData.end_time, a.start_time, a.end_time)
+                                );
+                                const statusLabel = isBusy
+                                  ? '⚠️ Occupied (Teaching)'
+                                  : hasAvail
+                                  ? '✓ Available'
+                                  : '(Check Availability)';
+                                return (
+                                  <option key={inst.id} value={inst.id}>
+                                    {inst.full_name} &bull; {statusLabel}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Session 2 Room & Teacher */}
+                        <div className="p-3 bg-white rounded-3 border mb-3 shadow-xs">
+                          <div className="d-flex align-items-center justify-content-between mb-2">
+                            <span className="badge bg-info-subtle text-info border border-info-subtle px-2 py-0.5 fw-bold text-xs">
+                              Session 2 {scheduleDayPattern === 'MW' ? '(Wed)' : scheduleDayPattern === 'TTH' ? '(Thu)' : `(${session2Data.session_type === 'lab' ? 'Lab' : 'Lec'})`}
+                            </span>
+                            {isUnspecified ? (
+                              <span className="badge bg-secondary-subtle text-secondary border px-2 py-0.5" style={{ fontSize: '10px' }}>
+                                Unspecified Room (N/A)
+                              </span>
+                            ) : (
+                              <div className="form-check form-check-inline mb-0">
+                                <input
+                                  className="form-check-input"
+                                  type="checkbox"
+                                  id="noRoomCheck2"
+                                  checked={isSecondNoRoom}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setIsSecondNoRoom(checked);
+                                    if (checked) {
+                                      setSession2Data((prev) => ({ ...prev, room_id: '' }));
+                                    } else {
+                                      const labRoom = availableRooms.find((r) => r.room_type === 'laboratory');
+                                      setSession2Data((prev) => ({
+                                        ...prev,
+                                        room_id: labRoom?.id || availableRooms[0]?.id || rooms[0]?.id || '',
+                                      }));
+                                    }
+                                  }}
+                                />
+                                <label className="form-check-label text-secondary" htmlFor="noRoomCheck2" style={{ fontSize: '11px', cursor: 'pointer' }}>
+                                  No room / off-site
+                                </label>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mb-2">
+                            <label className="form-label text-muted text-xs mb-1">Classroom / Facility</label>
+                            <select
+                              disabled={isUnspecified || isSecondNoRoom}
+                              value={isUnspecified ? naRoomId : isSecondNoRoom ? '' : (session2Data.room_id || availableRooms[0]?.id || rooms[0]?.id || '')}
+                              onChange={(e) => setSession2Data((prev) => ({ ...prev, room_id: e.target.value }))}
+                              className="form-select form-select-sm ref-form-control bg-white"
+                            >
+                              {isUnspecified ? (
+                                <option value={naRoomId}>None (N/A - Unspecified Room)</option>
+                              ) : isSecondNoRoom ? (
+                                <option value="">(Off-site session)</option>
+                              ) : (
+                                availableRooms.map((r) => {
+                                  if (r.name === 'None (N/A)') return null;
+                                  const depts = r.allowed_departments || (r.is_shared ? ['BSIT', 'High School'] : ['BSIT']);
+                                  const isShared = depts.includes('BSIT') && depts.includes('High School');
+                                  const deptTag = isShared ? '[Shared]' : `[${depts.join(', ')}]`;
+                                  const isOcc2 = entries.some(
+                                    (e) =>
+                                      (!secondEntry || e.id !== secondEntry.id) &&
+                                      e.day_of_week === session2Data.day_of_week &&
+                                      e.room_id === r.id &&
+                                      timeRangesOverlap(e.start_time, e.end_time, session2Data.start_time, session2Data.end_time)
+                                  );
+                                  return (
+                                    <option key={r.id} value={r.id}>
+                                      {r.name} ({r.room_type === 'laboratory' ? 'Lab' : 'Lec'}) {deptTag} {isOcc2 ? '⚠️ Occupied' : '✓ Available'}
+                                    </option>
+                                  );
+                                })
+                              )}
+                            </select>
+                            {isUnspecified && (
+                              <div className="text-muted fst-italic mt-1" style={{ fontSize: '11px' }}>
+                                <i className="bi bi-info-circle me-1"></i>
+                                This subject is configured with an unspecified room and never takes any classroom facility.
+                              </div>
+                            )}
+                          </div>
+
+                    <div>
+                      <label className="form-label text-muted text-xs mb-1">Assigned Instructor</label>
+                      <select
+                        value={session2Data.instructor_id}
+                        onChange={(e) => setSession2Data((prev) => ({ ...prev, instructor_id: e.target.value }))}
+                        required
+                        className="form-select form-select-sm ref-form-control bg-white"
+                      >
+                        <option value="" disabled>-- Select Faculty --</option>
+                        {qualifiedInstructors.map((inst) => {
+                          const isBusy2 = entries.some(
+                            (e) =>
+                              (!secondEntry || e.id !== secondEntry.id) &&
+                              e.day_of_week === session2Data.day_of_week &&
+                              e.instructor_id === inst.id &&
+                              timeRangesOverlap(e.start_time, e.end_time, session2Data.start_time, session2Data.end_time)
+                          );
+                          const hasAvail2 = (inst.instructor_availability || []).some(
+                            (a) =>
+                              a.day_of_week === session2Data.day_of_week &&
+                              isTimeRangeWithin(session2Data.start_time, session2Data.end_time, a.start_time, a.end_time)
+                          );
+                          const statusLabel2 = isBusy2
+                            ? '⚠️ Occupied (Teaching)'
+                            : hasAvail2
+                            ? '✓ Available'
+                            : '(Check Availability)';
+                          return (
+                            <option key={inst.id} value={inst.id}>
+                              {inst.full_name} &bull; {statusLabel2}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </>
+        ) : (
+                /* Single Session Room & Teacher */
+                <>
+                  {/* Room & Facility */}
+                  {(() => {
+                    const curOff = initialOfferings.find((o) => o.id === (formData.offering_id || availableOfferings[0]?.id));
+                    const curSub = subjects.find((s) => s.id === curOff?.subject_id);
+                    const isUnspecified = isSubjectUnspecified(curSub?.id) || isSubjectUnspecified(curSub?.code);
+                    const naRoomId = '00000000-0000-0000-0000-000000000000';
+
+                    return (
+                      <div className="mb-3">
+                        <div className="d-flex align-items-center justify-content-between mb-1">
+                          <label className="form-label small fw-semibold text-secondary mb-0">
+                            Classroom / Laboratory
+                          </label>
+                          {isUnspecified ? (
+                            <span className="badge bg-secondary-subtle text-secondary border px-2 py-0.5" style={{ fontSize: '10px' }}>
+                              Unspecified Room (N/A)
+                            </span>
+                          ) : (
+                            <div className="form-check form-check-inline mb-0">
+                              <input
+                                className="form-check-input"
+                                type="checkbox"
+                                id="noRoomCheck"
+                                checked={isNoRoom}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  setIsNoRoom(checked);
+                                  if (checked) {
+                                    setFormData((prev) => ({ ...prev, room_id: '' }));
+                                  } else {
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      room_id: availableRooms[0]?.id || rooms[0]?.id || '',
+                                    }));
+                                  }
+                                }}
+                              />
+                              <label className="form-check-label small text-secondary" htmlFor="noRoomCheck" style={{ fontSize: '12px', cursor: 'pointer' }}>
+                                No room / off-site
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                        <select
+                          disabled={isUnspecified || isNoRoom}
+                          value={isUnspecified ? naRoomId : isNoRoom ? '' : (formData.room_id || availableRooms[0]?.id || rooms[0]?.id || '')}
+                          onChange={(e) =>
+                            setFormData((prev) => ({ ...prev, room_id: e.target.value }))
+                          }
+                          className="form-select ref-form-control bg-white"
+                        >
+                          {isUnspecified ? (
+                            <option value={naRoomId}>None (N/A - Unspecified Room)</option>
+                          ) : isNoRoom ? (
+                            <option value="">(No facility required &mdash; off-site session)</option>
+                          ) : (
+                            availableRooms.map((r) => {
+                              if (r.name === 'None (N/A)') return null;
+                              const depts = r.allowed_departments || (r.is_shared ? ['BSIT', 'High School'] : ['BSIT']);
+                              const isShared = depts.includes('BSIT') && depts.includes('High School');
+                              const deptTag = isShared ? '[Shared]' : `[${depts.join(', ')}]`;
+                              const isOcc = entries.some(
+                                (e) =>
+                                  (!editingEntry || e.id !== editingEntry.id) &&
+                                  e.day_of_week === formData.day_of_week &&
+                                  e.room_id === r.id &&
+                                  timeRangesOverlap(e.start_time, e.end_time, formData.start_time, formData.end_time)
+                              );
+                              return (
+                                <option key={r.id} value={r.id}>
+                                  {r.name} ({r.room_type === 'laboratory' ? 'Lab' : 'Lec'}) {deptTag} {isOcc ? '⚠️ Occupied' : '✓ Available'}
+                                </option>
+                              );
+                            })
+                          )}
+                        </select>
+                        {isUnspecified && (
+                          <div className="text-muted fst-italic mt-1" style={{ fontSize: '11px' }}>
+                            <i className="bi bi-info-circle me-1"></i>
+                            This subject is configured with an unspecified room and never takes any classroom facility.
+                          </div>
+                        )}
+                      </div>
                     );
-                  })}
-                </select>
-                {qualifiedInstructors.length === 0 ? (
-                  <p className="text-danger small mt-1 mb-0" style={{ fontSize: '11px' }}>
-                    <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                    No faculty members are qualified for {selectedSubject?.code || 'this subject'}. Please configure faculty qualifications in Subjects or Instructors settings.
-                  </p>
-                ) : (
-                  <p className="text-muted small mt-1 mb-0" style={{ fontSize: '11px' }}>
-                    Only instructors qualified to teach {selectedSubject?.code || 'this subject'} are selectable.
-                  </p>
-                )}
-              </div>
+                  })()}
+
+                  {/* Instructor */}
+                  <div className="mb-3">
+                    <div className="d-flex align-items-center justify-content-between mb-1">
+                      <label className="form-label small fw-semibold text-secondary mb-0">
+                        Assigned Instructor
+                      </label>
+                      <span className="badge bg-success-subtle text-success border border-success-subtle" style={{ fontSize: '10px' }}>
+                        Qualified Faculty Only
+                      </span>
+                    </div>
+                    <select
+                      value={formData.instructor_id}
+                      onChange={(e) =>
+                        setFormData((prev) => ({ ...prev, instructor_id: e.target.value }))
+                      }
+                      required
+                      className="form-select ref-form-control bg-white"
+                    >
+                      <option value="" disabled>
+                        -- Select Qualified Faculty --
+                      </option>
+                      {qualifiedInstructors.map((inst) => {
+                        const isBusy = entries.some(
+                          (e) =>
+                            (!editingEntry || e.id !== editingEntry.id) &&
+                            e.day_of_week === formData.day_of_week &&
+                            e.instructor_id === inst.id &&
+                            timeRangesOverlap(e.start_time, e.end_time, formData.start_time, formData.end_time)
+                        );
+                        const hasAvail = (inst.instructor_availability || []).some(
+                          (a) =>
+                            a.day_of_week === formData.day_of_week &&
+                            isTimeRangeWithin(formData.start_time, formData.end_time, a.start_time, a.end_time)
+                        );
+                        const statusLabel = isBusy
+                          ? '⚠️ Occupied (Teaching)'
+                          : hasAvail
+                          ? '✓ Available'
+                          : '(Check Availability)';
+
+                        return (
+                          <option key={inst.id} value={inst.id}>
+                            {inst.full_name} &bull; {statusLabel}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {qualifiedInstructors.length === 0 ? (
+                      <p className="text-danger small mt-1 mb-0" style={{ fontSize: '11px' }}>
+                        <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                        No faculty members are qualified for {selectedSubject?.code || 'this subject'}. Please configure faculty qualifications in Subjects or Instructors settings.
+                      </p>
+                    ) : (
+                      <p className="text-muted small mt-1 mb-0" style={{ fontSize: '11px' }}>
+                        Only instructors qualified to teach {selectedSubject?.code || 'this subject'} are selectable.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
 
               {/* Scheduler Notes (Optional) */}
               <div className="mb-2">
@@ -3194,21 +4469,21 @@ export function ScheduleEditorClient({
         </div>
       </FormModal>
 
-      {/* AI Draft Schedule Generator Modal */}
+      {/* AI Schedule Adjustments Modal */}
       <FormModal
         isOpen={isAiModalOpen}
         onClose={() => setIsAiModalOpen(false)}
-        title="AI Auto-Schedule Generator"
-        description="Automatically schedules and places conflict-free class hours directly onto the weekly grid and spreadsheet."
+        title="AI Schedule Adjustments"
+        description="Request schedule adjustments or modifications for the selected block using AI."
         onSubmit={(e) => {
           e.preventDefault();
-          handleExecuteAiDraft('new');
+          handleExecuteAiDraft('refine');
         }}
         isSubmitting={isAiDrafting}
-        submitLabel="Generate New Draft"
-        size="lg"
+        submitLabel="Apply Adjustments"
+        size="md"
         customFooter={
-          <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 w-100">
+          <div className="d-flex align-items-center justify-content-between gap-2 w-100">
             <button
               type="button"
               onClick={() => setIsAiModalOpen(false)}
@@ -3217,147 +4492,203 @@ export function ScheduleEditorClient({
             >
               Cancel
             </button>
-            <div className="d-flex flex-wrap align-items-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleExecuteAiDraft('refine')}
-                disabled={isAiDrafting}
-                className="btn btn-outline-primary btn-sm rounded-pill py-2 px-3.5 d-flex align-items-center gap-1.5 fw-semibold shadow-sm"
-                title="Reads existing schedule entries and modifies/adjusts them using your preferences"
-              >
-                {isAiDrafting ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
-                    <span>Analyzing Draft...</span>
-                  </>
-                ) : (
-                  <>
-                    <i className="bi bi-magic text-primary"></i>
-                    <span>Read Current Draft &amp; Apply Preferences</span>
-                  </>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleExecuteAiDraft('new')}
-                disabled={isAiDrafting}
-                className="btn-ref-primary small py-2 px-3.5 d-flex align-items-center gap-1.5"
-                title="Generates a complete fresh draft from scratch"
-              >
-                {isAiDrafting ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
-                    <span>Generating...</span>
-                  </>
-                ) : (
-                  <>
-                    <i className="bi bi-stars"></i>
-                    <span>Generate New Draft</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => handleExecuteAiDraft('refine')}
+              disabled={isAiDrafting || !aiPromptNotes.trim()}
+              className="btn text-white btn-sm rounded-pill py-2 px-4 d-flex align-items-center gap-1.5 fw-semibold shadow-sm"
+              style={{ backgroundColor: '#0E0AB8' }}
+            >
+              {isAiDrafting ? (
+                <>
+                  <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+                  <span>Applying Adjustments...</span>
+                </>
+              ) : (
+                <>
+                  <i className="bi bi-magic"></i>
+                  <span>Apply Adjustments</span>
+                </>
+              )}
+            </button>
           </div>
         }
       >
-        <div className="space-y-4">
-          {/* Target Generation Scope */}
-          <div>
-            <label className="form-label small fw-semibold text-secondary mb-1">
-              Target Generation Scope
-            </label>
-            <div className="row g-2">
-              {selectedBlockId && (
-                <div className="col-12 col-md-6">
-                  <label
-                    className={`p-3 rounded-3 border cursor-pointer d-flex align-items-center justify-content-between h-100 ${
-                      aiScope === 'current'
-                        ? 'border-primary bg-primary-subtle text-primary-emphasis'
-                        : 'border-light-subtle bg-white'
-                    }`}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <div className="d-flex align-items-center gap-2">
-                      <input
-                        type="radio"
-                        name="aiScope"
-                        checked={aiScope === 'current'}
-                        onChange={() => setAiScope('current')}
-                        className="form-check-input mt-0"
-                      />
-                      <div>
-                        <span className="fw-semibold text-dark d-block">
-                          Selected Block Only
-                        </span>
-                        <span className="text-muted small">
-                          {formatBlockLabel(blocks.find((b) => b.id === selectedBlockId))}
-                        </span>
-                      </div>
-                    </div>
-                    <span className="badge bg-primary-subtle text-primary border border-primary-subtle">Fast</span>
-                  </label>
-                </div>
-              )}
-
-              <div className={`col-12 ${selectedBlockId ? 'col-md-6' : 'col-md-12'}`}>
-                <label
-                  className={`p-3 rounded-3 border cursor-pointer d-flex align-items-center justify-content-between h-100 ${
-                    aiScope === 'all' || !selectedBlockId
-                      ? 'border-primary bg-primary-subtle text-primary-emphasis'
-                      : 'border-light-subtle bg-white'
-                  }`}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <div className="d-flex align-items-center gap-2">
-                    <input
-                      type="radio"
-                      name="aiScope"
-                      checked={aiScope === 'all' || !selectedBlockId}
-                      onChange={() => setAiScope('all')}
-                      className="form-check-input mt-0"
-                    />
-                    <div>
-                      <span className="fw-semibold text-dark d-block">
-                        All Academic Blocks
-                      </span>
-                      <span className="text-muted small">
-                        Generates complete timetable across all {blocks.length} department blocks
-                      </span>
-                    </div>
-                  </div>
-                  <span className="badge bg-info-subtle text-info border border-info-subtle">Comprehensive</span>
-                </label>
-              </div>
+        <div className="space-y-3">
+          <div className="p-3 bg-light rounded-3 border">
+            <div className="small text-muted fw-semibold mb-0.5">
+              Target Cohort:
+            </div>
+            <div className="fw-bold text-dark">
+              {selectedBlock ? formatBlockLabel(selectedBlock) : 'Selected Block'}
             </div>
           </div>
 
-          {/* Natural Language Prompt & Exclusions */}
           <div>
-            <div className="d-flex align-items-center justify-content-between mb-1">
-              <label className="form-label small fw-semibold text-secondary mb-0">
-                Scheduler Instructions & Preferences (AI Prompt)
-              </label>
-              <span className="badge bg-secondary-subtle text-secondary small">Optional</span>
+            <label className="form-label small fw-semibold text-secondary mb-1">
+              Adjustment Scope
+            </label>
+            <div className="btn-group w-100" role="group">
+              <button
+                type="button"
+                onClick={() => setAiRefineScope('targeted')}
+                className={`btn btn-sm ${
+                  aiRefineScope === 'targeted'
+                    ? 'btn-primary text-white fw-semibold'
+                    : 'btn-light border text-secondary'
+                }`}
+              >
+                <i className="bi bi-pin-angle me-1" />
+                Targeted (Lock unmentioned subjects)
+              </button>
+              <button
+                type="button"
+                onClick={() => setAiRefineScope('whole_block')}
+                className={`btn btn-sm ${
+                  aiRefineScope === 'whole_block'
+                    ? 'btn-primary text-white fw-semibold'
+                    : 'btn-light border text-secondary'
+                }`}
+              >
+                <i className="bi bi-shuffle me-1" />
+                Whole-Block Reshuffle
+              </button>
             </div>
+            <div className="form-text small text-muted mt-1" style={{ fontSize: '11px' }}>
+              {aiRefineScope === 'targeted'
+                ? 'Only the subject(s) specifically mentioned in your prompt will be adjusted. All other subjects stay strictly locked.'
+                : 'AI can reshuffle all classes in this block to optimize morning/afternoon distribution or resolve broad changes.'}
+            </div>
+          </div>
+
+          <div>
+            <label className="form-label small fw-semibold text-secondary mb-1">
+              Adjustment Instructions
+            </label>
             <textarea
               className="form-control"
               rows={3}
               value={aiPromptNotes}
-              onChange={(e) => setAiPromptNotes(e.target.value)}
-              placeholder='e.g., "Make a schedule for Block-1A but leave out this 3 subjects GE 1, GE 2, THEO 1. Make the schedule split into two days on MW, TTH and the last one will be Friday."'
+              onChange={(e) => {
+                const val = e.target.value;
+                setAiPromptNotes(val);
+                if (/(reshuffle|re-shuffle|whole block|entire block|all classes|re-generate|regenerate)/i.test(val)) {
+                  setAiRefineScope('whole_block');
+                }
+              }}
+              placeholder='e.g., "Move PE to Saturday", "Change PROG 1 to TTH", "Assign Mitchillie to HCI", or "Prefer morning slots"'
               style={{ fontSize: '13px' }}
             />
             <div className="form-text small text-muted">
-              You can specify subjects to omit (e.g. <em>&quot;leave out GE 1, GE 2&quot;</em>), day split requests, or specific timing guidelines.
+              AI will review the current timetable entries for this block and apply your requested adjustments.
             </div>
-          </div>
 
-          <div className="p-3 bg-light rounded-3 border small text-muted">
-            <i className="bi bi-info-circle-fill text-primary me-1"></i>
-            The AI engine validates room capacities, instructor availability, and prevents overlaps. All generated classes will immediately appear on your weekly grid and spreadsheet.
+            <div className="form-check pt-2">
+              <input
+                className="form-check-input"
+                type="checkbox"
+                id="aiAllowSaturdayCheck"
+                checked={aiAllowSaturday || /saturday|sat\b/i.test(aiPromptNotes)}
+                onChange={(e) => setAiAllowSaturday(e.target.checked)}
+              />
+              <label className="form-check-label small text-secondary" htmlFor="aiAllowSaturdayCheck" style={{ cursor: 'pointer' }}>
+                Allow Saturday scheduling slots (enabled automatically if requested in prompt)
+              </label>
+            </div>
           </div>
         </div>
       </FormModal>
+
+      {/* Schedule Conflict / Collision Notice Modal */}
+      {collisionNotice && (
+        <div
+          className="modal show d-block"
+          style={{ backgroundColor: 'rgba(15, 23, 42, 0.55)', backdropFilter: 'blur(4px)', zIndex: 1060 }}
+        >
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content border-0 shadow-lg rounded-5 p-3">
+              <div className="modal-header border-0 pb-2">
+                <div className="d-flex align-items-center gap-2">
+                  <span
+                    className="d-flex align-items-center justify-content-center rounded-3 bg-danger-subtle text-danger"
+                    style={{ width: '38px', height: '38px' }}
+                  >
+                    <i className="bi bi-exclamation-triangle-fill fs-5" />
+                  </span>
+                  <div>
+                    <h2 className="modal-title h6 fw-bold text-dark mb-0">Schedule Conflict Detected</h2>
+                    <p className="text-secondary small mb-0">Existing schedule preserved safely</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCollisionNotice(null)}
+                  className="btn-close"
+                  disabled={isAiDrafting}
+                />
+              </div>
+
+              <div className="modal-body py-2">
+                <div className="p-3 bg-danger-subtle text-danger border border-danger-subtle rounded-3 small mb-3">
+                  <div className="fw-bold mb-1 d-flex align-items-center gap-1.5">
+                    <i className="bi bi-shield-x" />
+                    Conflict Details:
+                  </div>
+                  <div>{collisionNotice.message}</div>
+                </div>
+
+                <p className="small text-secondary mb-2">
+                  The AI preserved all existing classes without moving or displacing them. Please enter an alternative instruction to try again (e.g. choose an open time slot, pick a different day, or ask to swap two classes):
+                </p>
+
+                <div className="mb-2">
+                  <label className="form-label small fw-semibold text-secondary mb-1">
+                    Alternative Adjustment Instruction
+                  </label>
+                  <textarea
+                    className="form-control"
+                    rows={3}
+                    value={aiPromptNotes}
+                    onChange={(e) => setAiPromptNotes(e.target.value)}
+                    placeholder='e.g., "Move PE to Saturday 10:00 instead", or "Swap PROG 1 with MATH PREP"'
+                    style={{ fontSize: '13px' }}
+                  />
+                </div>
+              </div>
+
+              <div className="modal-footer border-0 pt-2 d-flex justify-content-between">
+                <button
+                  type="button"
+                  onClick={() => setCollisionNotice(null)}
+                  disabled={isAiDrafting}
+                  className="btn btn-outline-secondary btn-sm py-2 px-3 rounded-pill"
+                >
+                  Dismiss
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExecuteAiDraft('refine')}
+                  disabled={isAiDrafting || !aiPromptNotes.trim()}
+                  className="btn text-white btn-sm rounded-pill py-2 px-4 d-flex align-items-center gap-1.5 fw-semibold shadow-sm"
+                  style={{ backgroundColor: '#0E0AB8' }}
+                >
+                  {isAiDrafting ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+                      <span>Retrying Adjustment...</span>
+                    </>
+                  ) : (
+                    <>
+                      <i className="bi bi-arrow-repeat" />
+                      <span>Retry Adjustment</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Publish Gate Modal */}
       {isPublishModalOpen && (
@@ -3634,6 +4965,64 @@ export function ScheduleEditorClient({
             <i className="bi bi-info-circle me-1 text-primary"></i>
             Tip: Most unplaced subjects occur when 0 instructors are marked as qualified for that subject in Subject/Faculty settings, or when instructor availability hours do not overlap with classroom availability.
           </div>
+        </div>
+      </FormModal>
+
+      {/* Clear All Schedules Confirmation Modal */}
+      <FormModal
+        isOpen={isConfirmClearAllOpen}
+        onClose={() => setIsConfirmClearAllOpen(false)}
+        title={userRole === 'admin' ? 'Clear All Schedules' : 'Clear Department Scope Schedules'}
+        description={
+          userRole === 'admin'
+            ? `Remove all scheduled class sessions across all student blocks for draft v${draftVersion.version_number}.`
+            : `Remove scheduled class sessions within your ${schedulerDepartment || 'department'} supervision scope for draft v${draftVersion.version_number}.`
+        }
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleClearAllDraftSchedules();
+        }}
+        isSubmitting={isClearingAll}
+        submitLabel={userRole === 'admin' ? 'Yes, Clear All Schedules' : 'Yes, Clear My Scope Schedules'}
+        size="md"
+      >
+        <div className="space-y-3">
+          <div className="alert alert-danger d-flex align-items-center gap-2 mb-3">
+            <i className="bi bi-exclamation-triangle-fill fs-5"></i>
+            <div>
+              <strong>Warning:</strong> You are about to clear {userRole === 'admin' ? 'all scheduled classes across all cohorts' : `scheduled classes within your ${schedulerDepartment || 'department'} scope`} in <strong>Draft v{draftVersion.version_number}</strong>.
+            </div>
+          </div>
+          <p className="text-secondary small mb-0">
+            This will remove {userRole === 'admin' ? 'all' : 'your department\'s'} timetable session entries from this draft. Curriculum subjects and faculty assignments will remain intact so you can re-run the algorithm or place classes fresh.
+          </p>
+        </div>
+      </FormModal>
+
+      {/* Clear Block Schedule Confirmation Modal */}
+      <FormModal
+        isOpen={isConfirmClearBlockOpen}
+        onClose={() => setIsConfirmClearBlockOpen(false)}
+        title={`Clear Schedule: ${selectedBlock ? formatBlockLabel(selectedBlock) : 'Block'}`}
+        description="Remove all scheduled class sessions for this student block."
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleClearBlockDraftSchedule();
+        }}
+        isSubmitting={isClearingBlock}
+        submitLabel="Yes, Clear Block Schedule"
+        size="md"
+      >
+        <div className="space-y-3">
+          <div className="alert alert-warning d-flex align-items-center gap-2 mb-3">
+            <i className="bi bi-exclamation-triangle-fill fs-5"></i>
+            <div>
+              <strong>Are you sure?</strong> You are clearing all scheduled classes for <strong>{selectedBlock ? formatBlockLabel(selectedBlock) : 'this block'}</strong>.
+            </div>
+          </div>
+          <p className="text-secondary small mb-0">
+            Other cohort schedules will remain untouched. You can re-add classes or re-run the algorithm for this block at any time.
+          </p>
         </div>
       </FormModal>
     </div>

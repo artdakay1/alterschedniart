@@ -14,8 +14,10 @@ import type {
   FixedConstraint,
   ScheduleEntry,
   ScheduleVersion,
+  DepartmentType,
 } from '@/types/database';
 import { syncAllBlockOfferingsForTerm, getCurriculumMetadataMap } from '@/lib/academic/curriculum-connector';
+import { getRoomAllowedDepartments } from '@/lib/academic/room-departments';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +26,7 @@ interface PageProps {
     termId?: string;
     versionId?: string;
     blockId?: string;
+    masterlist?: string;
   }>;
 }
 
@@ -114,6 +117,7 @@ export default async function SchedulerSchedulePage({ searchParams }: PageProps)
     subjectsRes,
     constraintsRes,
     entriesRes,
+    profileRes,
   ] = await Promise.all([
     supabase
       .from('class_offerings')
@@ -133,6 +137,11 @@ export default async function SchedulerSchedulePage({ searchParams }: PageProps)
       .from('schedule_entries')
       .select('*, class_offerings(*, subjects(*), blocks(*)), instructors(*), rooms(*)')
       .eq('version_id', activeVersion.id),
+    supabase
+      .from('profiles')
+      .select('role, department, allowed_subjects')
+      .eq('id', user.id)
+      .single(),
   ]);
 
   let offerings = (offeringsRes.data || []) as (ClassOffering & { subjects?: Subject | null })[];
@@ -149,6 +158,19 @@ export default async function SchedulerSchedulePage({ searchParams }: PageProps)
     }
   }
 
+  const userProfile = profileRes.data;
+  const userRole = userProfile?.role || 'scheduler';
+  const schedulerDepartment =
+    (user.user_metadata?.department as DepartmentType) || userProfile?.department || 'BSIT';
+  const allowedSubjectIds =
+    (user.user_metadata?.allowed_subject_ids as string[]) || userProfile?.allowed_subjects || null;
+
+  const rawRooms = (roomsRes.data || []) as Room[];
+  const enrichedRooms = rawRooms.map((r) => ({
+    ...r,
+    allowed_departments: getRoomAllowedDepartments(r as any),
+  })) as Room[];
+
   return (
     <div className="space-y-4">
       <ScheduleEditorClient
@@ -163,15 +185,19 @@ export default async function SchedulerSchedulePage({ searchParams }: PageProps)
           rooms?: Room | null;
         })[]}
         offerings={offerings}
-        rooms={(roomsRes.data || []) as Room[]}
+        rooms={enrichedRooms}
         instructors={(instructorsRes.data || []) as (Instructor & {
           instructor_qualifications?: { subject_id: string }[];
           instructor_availability?: { day_of_week: number; start_time: string; end_time: string }[];
         })[]}
         subjects={(subjectsRes.data || []) as Subject[]}
         fixedConstraints={(constraintsRes.data || []) as FixedConstraint[]}
-        initialBlockId={params.blockId}
+        initialBlockId={params.masterlist === 'true' ? undefined : params.blockId}
+        initialShowMasterlist={params.masterlist === 'true'}
         metadataMap={getCurriculumMetadataMap()}
+        userRole={userRole}
+        schedulerDepartment={schedulerDepartment}
+        allowedSubjectIds={allowedSubjectIds}
       />
     </div>
   );

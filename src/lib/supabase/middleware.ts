@@ -90,7 +90,8 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (pathname.startsWith('/scheduler') && userRole !== 'scheduler') {
+  // Admin users have full access to /scheduler routes (Schedule Editor, Generator, etc.)
+  if (pathname.startsWith('/scheduler') && userRole !== 'scheduler' && userRole !== 'admin') {
     const url = request.nextUrl.clone();
     url.pathname = roleDashboard;
     return NextResponse.redirect(url);

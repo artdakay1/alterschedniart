@@ -27,6 +27,11 @@ async function assertAdminCaller() {
   return { supabase, user };
 }
 
+import {
+  saveRoomDepartmentsToConfig,
+  removeRoomDepartmentsFromConfig,
+} from '@/lib/academic/room-departments';
+
 export async function saveRoomAction(id: string | null, rawInput: RoomInput) {
   const { supabase, user } = await assertAdminCaller();
 
@@ -36,8 +41,20 @@ export async function saveRoomAction(id: string | null, rawInput: RoomInput) {
   }
   const data = parsed.data;
 
+  // Auto-compute is_shared: true if available for both BSIT and High School
+  const isShared =
+    data.allowed_departments.includes('BSIT') &&
+    data.allowed_departments.includes('High School');
+
   let before: Partial<Room> | null = null;
   let roomId = id;
+
+  const roomPayload: any = {
+    name: data.name,
+    room_type: data.room_type,
+    capacity: data.capacity,
+    is_shared: isShared,
+  };
 
   if (id) {
     const { data: existing } = await supabase
@@ -47,41 +64,61 @@ export async function saveRoomAction(id: string | null, rawInput: RoomInput) {
       .single();
     before = existing;
 
-    const { error } = await supabase
+    // Try updating with allowed_departments
+    let updateResult = await supabase
       .from('rooms')
       .update({
-        name: data.name,
-        room_type: data.room_type,
-        capacity: data.capacity,
-        is_shared: data.is_shared,
+        ...roomPayload,
+        allowed_departments: data.allowed_departments,
       })
       .eq('id', id);
 
-    if (error) {
-      if (error.code === '23505') {
+    // If column allowed_departments doesn't exist yet on DB, fallback without it
+    if (updateResult.error && updateResult.error.code === '42703') {
+      updateResult = await supabase
+        .from('rooms')
+        .update(roomPayload)
+        .eq('id', id);
+    }
+
+    if (updateResult.error) {
+      if (updateResult.error.code === '23505') {
         throw new Error(`A room named "${data.name}" already exists.`);
       }
-      throw new Error(`Failed to update room: ${error.message}`);
+      throw new Error(`Failed to update room: ${updateResult.error.message}`);
     }
   } else {
-    const { data: created, error } = await supabase
+    // Try inserting with allowed_departments
+    let insertResult = await supabase
       .from('rooms')
       .insert({
-        name: data.name,
-        room_type: data.room_type,
-        capacity: data.capacity,
-        is_shared: data.is_shared,
+        ...roomPayload,
+        allowed_departments: data.allowed_departments,
       })
       .select()
       .single();
 
-    if (error) {
-      if (error.code === '23505') {
+    // Fallback if column does not exist yet
+    if (insertResult.error && insertResult.error.code === '42703') {
+      insertResult = await supabase
+        .from('rooms')
+        .insert(roomPayload)
+        .select()
+        .single();
+    }
+
+    if (insertResult.error) {
+      if (insertResult.error.code === '23505') {
         throw new Error(`A room named "${data.name}" already exists.`);
       }
-      throw new Error(`Failed to create room: ${error.message}`);
+      throw new Error(`Failed to create room: ${insertResult.error.message}`);
     }
-    roomId = created.id;
+    roomId = insertResult.data.id;
+  }
+
+  // Persist to room-departments config
+  if (roomId) {
+    await saveRoomDepartmentsToConfig(roomId, data.allowed_departments, data.name);
   }
 
   await supabase.from('audit_log').insert({
@@ -90,10 +127,12 @@ export async function saveRoomAction(id: string | null, rawInput: RoomInput) {
     entity_type: 'rooms',
     entity_id: roomId,
     before: before ? JSON.parse(JSON.stringify(before)) : null,
-    after: JSON.parse(JSON.stringify(data)),
+    after: JSON.parse(JSON.stringify({ ...data, is_shared: isShared })),
   });
 
   revalidatePath('/admin/rooms');
+  revalidatePath('/scheduler');
+  revalidatePath('/scheduler/schedule');
 }
 
 export async function deleteRoomAction(id: string) {
@@ -118,6 +157,8 @@ export async function deleteRoomAction(id: string) {
     throw new Error(`Failed to delete room: ${error.message}`);
   }
 
+  await removeRoomDepartmentsFromConfig(id, before.name);
+
   await supabase.from('audit_log').insert({
     actor_id: user.id,
     action: 'DELETE_ROOM',
@@ -128,4 +169,6 @@ export async function deleteRoomAction(id: string) {
   });
 
   revalidatePath('/admin/rooms');
+  revalidatePath('/scheduler');
+  revalidatePath('/scheduler/schedule');
 }

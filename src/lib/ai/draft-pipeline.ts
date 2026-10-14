@@ -71,29 +71,13 @@ export async function clearPreviousAiEntriesForBlock(
   if (offeringIds.length === 0) return;
 
   try {
-    // Attempt selective delete using created_by_ai = true
-    const { error } = await supabase
-      .from('schedule_entries')
-      .delete()
-      .eq('version_id', versionId)
-      .eq('created_by_ai', true)
-      .in('offering_id', offeringIds);
-
-    if (error && (error.code === '42703' || error.message.includes('created_by_ai'))) {
-      // Column created_by_ai doesn't exist yet on remote db; delete entries for these offerings
-      await supabase
-        .from('schedule_entries')
-        .delete()
-        .eq('version_id', versionId)
-        .in('offering_id', offeringIds);
-    }
-  } catch {
-    // Fallback delete for offerings
     await supabase
       .from('schedule_entries')
       .delete()
       .eq('version_id', versionId)
       .in('offering_id', offeringIds);
+  } catch (err) {
+    console.warn('[Draft Pipeline] Failed to clear previous entries for offerings:', err);
   }
 }
 
@@ -116,10 +100,11 @@ export async function executeBlockDraft(
     await clearPreviousAiEntriesForBlock(supabase, versionId, offeringIds);
   }
 
-  // Filter existing entries to exclude entries of this block if they were cleared
-  const activeBaselineEntries = payload.preferences.isRefineMode
-    ? currentDraftEntries
-    : currentDraftEntries.filter((e) => !offeringIds.includes(e.offeringId));
+  // Filter existing entries to exclude entries of this block so new proposed candidate entries
+  // are validated against OTHER blocks and do not self-collide with old entries of the current block.
+  const activeBaselineEntries = currentDraftEntries.filter(
+    (e) => e.blockId !== payload.block.id && !offeringIds.includes(e.offeringId)
+  );
 
   let attemptCount = 0;
   const maxAttempts = 3;
@@ -132,45 +117,18 @@ export async function executeBlockDraft(
     | { violatingEntries: ProposedEntry[]; violationMessages: string[] }
     | undefined = undefined;
 
-  // 2. Validate-then-repair loop (up to 3 attempts)
-  while (attemptCount < maxAttempts) {
-    attemptCount++;
+  // 2. Schedule Generation: Deterministic Rule-Based Algorithm vs. AI Refine Adjustments
+  if (!payload.preferences.isRefineMode) {
+    // -------------------------------------------------------------
+    // PURE RULE-BASED ALGORITHM (NO AI INVOLVED)
+    // -------------------------------------------------------------
+    attemptCount = 1;
+    const proposed = generateHeuristicDraft(payload);
 
-    let proposed: ProposedEntry[] = [];
-    try {
-      const response = await generateDraftWithGemini(payload, currentRepairContext);
-      finalRawOutput = response.rawResponse;
-      proposed = response.parsedEntries;
-    } catch (err: unknown) {
-      // Mid-run failure or timeout: do not write anything partial; fail block into unassigned
-      const errorMsg = err instanceof Error ? err.message : 'AI generation error';
-      for (const off of payload.offerings) {
-        unassignedOfferings.push({
-          offeringId: off.id,
-          subjectCode: off.subject.code || 'Course',
-          remainingHours: off.subject.lectureHours + off.subject.labHours,
-          reason: `Generation failed: ${errorMsg}`,
-        });
-      }
-
-      return {
-        blockId: payload.block.id,
-        blockName,
-        success: false,
-        attemptCount,
-        entriesWritten: [],
-        unassigned: unassignedOfferings,
-        softViolations: [],
-        rawOutput: { error: errorMsg },
-        error: errorMsg,
-      };
-    }
-
-    // Convert proposed entries into ScheduleEntryInput format for checkSchedule
     const candidateEntries: ScheduleEntryInput[] = proposed.map((p, idx) => {
       const off = payload.offerings.find((o) => o.id === p.offeringId);
       return {
-        id: `draft-cand-${attemptCount}-${idx}`,
+        id: `draft-rule-${idx}`,
         offeringId: p.offeringId,
         blockId: payload.block.id,
         subjectId: off?.subject.id || '',
@@ -183,78 +141,148 @@ export async function executeBlockDraft(
       };
     });
 
-    // Evaluate proposed entries against the full current draft
     const allCandidateEntries = [...activeBaselineEntries, ...candidateEntries];
     const violations = checkSchedule(allCandidateEntries, engineContext);
-
     const hardViolations = violations.filter((v) => v.severity === 'hard');
     detectedSoftViolations = violations.filter((v) => v.severity === 'soft');
 
     if (hardViolations.length === 0) {
-      // ZERO hard violations: accept all candidate entries!
       cleanEntriesToWrite = candidateEntries;
-      break;
     } else {
-      // Find candidate entries that caused hard violations
       const badEntryIds = new Set<string>();
-      const errorMessages: string[] = [];
-
       for (const v of hardViolations) {
-        errorMessages.push(`[${v.rule}] ${v.message}`);
         for (const id of v.entryIds) {
-          if (id.startsWith('draft-cand-')) {
+          if (id.startsWith('draft-rule-')) {
             badEntryIds.add(id);
           }
         }
       }
+      cleanEntriesToWrite = candidateEntries.filter((e) => !badEntryIds.has(e.id));
+    }
 
-      // If at last attempt, discard bad entries and keep any valid clean entries
-      if (attemptCount >= maxAttempts) {
-        for (const entry of candidateEntries) {
-          if (!badEntryIds.has(entry.id)) {
-            cleanEntriesToWrite.push(entry);
-          }
-        }
+    finalRawOutput = {
+      solver: 'deterministic_rule_based_algorithm',
+      proposedCount: proposed.length,
+      writtenCount: cleanEntriesToWrite.length,
+      hardViolationsCount: hardViolations.length,
+    };
+  } else {
+    // -------------------------------------------------------------
+    // AI ADJUSTMENT MODE (Gemini LLM for scheduler adjustments)
+    // -------------------------------------------------------------
+    while (attemptCount < maxAttempts) {
+      attemptCount++;
 
-        // If no clean entries could be rescued from the AI iterations, run the deterministic solver
-        if (cleanEntriesToWrite.length === 0) {
-          const fallbackProposed = generateHeuristicDraft(payload);
-          const fallbackCandidates: ScheduleEntryInput[] = fallbackProposed.map((p, idx) => {
-            const off = payload.offerings.find((o) => o.id === p.offeringId);
-            return {
-              id: `draft-fallback-${idx}`,
-              offeringId: p.offeringId,
-              blockId: payload.block.id,
-              subjectId: off?.subject.id || '',
-              instructorId: p.instructorId,
-              roomId: p.roomId || null,
-              dayOfWeek: p.dayOfWeek,
-              startTime: p.startTime.slice(0, 5),
-              endTime: p.endTime.slice(0, 5),
-              sessionType: p.sessionType,
-            };
+      let proposed: ProposedEntry[] = [];
+      try {
+        const response = await generateDraftWithGemini(payload, currentRepairContext);
+        finalRawOutput = response.rawResponse;
+        proposed = response.parsedEntries;
+      } catch (err: unknown) {
+        // Mid-run failure or timeout: do not write anything partial; fail block into unassigned
+        const errorMsg = err instanceof Error ? err.message : 'AI adjustment error';
+        for (const off of payload.offerings) {
+          unassignedOfferings.push({
+            offeringId: off.id,
+            subjectCode: off.subject.code || 'Course',
+            remainingHours: off.subject.lectureHours + off.subject.labHours,
+            reason: `Adjustment failed: ${errorMsg}`,
           });
-          const fallbackViolations = checkSchedule(
-            [...activeBaselineEntries, ...fallbackCandidates],
-            engineContext
-          );
-          const fallbackHard = fallbackViolations.filter((v) => v.severity === 'hard');
-          if (fallbackHard.length === 0) {
-            cleanEntriesToWrite = fallbackCandidates;
-          }
         }
-        break;
+
+        return {
+          blockId: payload.block.id,
+          blockName,
+          success: false,
+          attemptCount,
+          entriesWritten: [],
+          unassigned: unassignedOfferings,
+          softViolations: [],
+          rawOutput: { error: errorMsg },
+          error: errorMsg,
+        };
       }
 
-      // Prepare repair context for next attempt
-      const violatingProposed = proposed.filter((_, idx) =>
-        badEntryIds.has(`draft-cand-${attemptCount}-${idx}`)
-      );
+      // Convert proposed entries into ScheduleEntryInput format for checkSchedule
+      const candidateEntries: ScheduleEntryInput[] = proposed.map((p, idx) => {
+        const off = payload.offerings.find((o) => o.id === p.offeringId);
+        return {
+          id: `draft-cand-${attemptCount}-${idx}`,
+          offeringId: p.offeringId,
+          blockId: payload.block.id,
+          subjectId: off?.subject.id || '',
+          instructorId: p.instructorId,
+          roomId: p.roomId || null,
+          dayOfWeek: p.dayOfWeek,
+          startTime: p.startTime.slice(0, 5),
+          endTime: p.endTime.slice(0, 5),
+          sessionType: p.sessionType,
+        };
+      });
 
-      currentRepairContext = {
-        violatingEntries: violatingProposed,
-        violationMessages: errorMessages,
-      };
+      // Evaluate proposed entries against the full current draft
+      const allCandidateEntries = [...activeBaselineEntries, ...candidateEntries];
+      const violations = checkSchedule(allCandidateEntries, engineContext);
+
+      const hardViolations = violations.filter((v) => v.severity === 'hard');
+      detectedSoftViolations = violations.filter((v) => v.severity === 'soft');
+
+      if (hardViolations.length === 0) {
+        // ZERO hard violations: accept all candidate entries!
+        cleanEntriesToWrite = candidateEntries;
+        break;
+      } else {
+        // Find candidate entries that caused hard violations
+        const badEntryIds = new Set<string>();
+        const errorMessages: string[] = [];
+
+        for (const v of hardViolations) {
+          errorMessages.push(`[${v.rule}] ${v.message}`);
+          for (const id of v.entryIds) {
+            if (id.startsWith('draft-cand-')) {
+              badEntryIds.add(id);
+            }
+          }
+        }
+
+        // If at last attempt, discard bad entries and keep any valid clean entries
+        if (attemptCount >= maxAttempts) {
+          if (payload.preferences.isRefineMode) {
+            const collisionSummary =
+              errorMessages.length > 0
+                ? errorMessages.join('; ')
+                : 'The requested adjustment creates a schedule collision.';
+
+            return {
+              blockId: payload.block.id,
+              blockName,
+              success: false,
+              attemptCount,
+              entriesWritten: [],
+              unassigned: [],
+              softViolations: [],
+              rawOutput: { error: collisionSummary },
+              error: collisionSummary,
+            };
+          }
+          for (const entry of candidateEntries) {
+            if (!badEntryIds.has(entry.id)) {
+              cleanEntriesToWrite.push(entry);
+            }
+          }
+          break;
+        }
+
+        // Prepare repair context for next attempt
+        const violatingProposed = proposed.filter((_, idx) =>
+          badEntryIds.has(`draft-cand-${attemptCount}-${idx}`)
+        );
+
+        currentRepairContext = {
+          violatingEntries: violatingProposed,
+          violationMessages: errorMessages,
+        };
+      }
     }
   }
 
@@ -278,7 +306,7 @@ export async function executeBlockDraft(
       if (off.qualifiedInstructors.length === 0) {
         specificReason = `No qualified instructors assigned for ${off.subject.code} in database.`;
       } else if (off.eligibleRooms.length === 0 && off.subject.facilityType !== 'unspecified') {
-        specificReason = `No eligible rooms with capacity >= ${payload.block.studentCount}.`;
+        specificReason = `No eligible rooms available for ${off.subject.code || 'course'}.`;
       }
       unassignedOfferings.push({
         offeringId: off.id,
@@ -298,15 +326,46 @@ export async function executeBlockDraft(
   // Entries with zero hard violations are inserted immediately
   const writtenDatabaseEntries: ScheduleEntryInput[] = [];
 
-  if (cleanEntriesToWrite.length > 0) {
-    const rowsToInsert = cleanEntriesToWrite.map((entry) => {
-      const defaultRoomId =
-        payload.offerings.find((o) => o.id === entry.offeringId)?.eligibleRooms[0]?.id || null;
+  // Final strict verification: ensure no entry in cleanEntriesToWrite produces hard conflicts with baseline or each other
+  const finalValidation = checkSchedule([...activeBaselineEntries, ...cleanEntriesToWrite], engineContext);
+  const finalHardViolations = finalValidation.filter((v) => v.severity === 'hard');
+  let validatedEntriesToWrite = cleanEntriesToWrite;
+  if (finalHardViolations.length > 0) {
+    const badIds = new Set<string>();
+    for (const v of finalHardViolations) {
+      for (const id of v.entryIds) {
+        badIds.add(id);
+      }
+    }
+    const filteredClean = cleanEntriesToWrite.filter((e) => !badIds.has(e.id));
+    // Add discarded conflicting items to unassigned
+    for (const discarded of cleanEntriesToWrite.filter((e) => badIds.has(e.id))) {
+      const off = payload.offerings.find((o) => o.id === discarded.offeringId);
+      if (off && !unassignedOfferings.some((u) => u.offeringId === off.id)) {
+        unassignedOfferings.push({
+          offeringId: off.id,
+          subjectCode: off.subject.code || 'Course',
+          remainingHours: off.subject.lectureHours + off.subject.labHours,
+          reason: 'Hard schedule conflict prevented placement.',
+        });
+      }
+    }
+    validatedEntriesToWrite = filteredClean;
+  }
+
+  if (validatedEntriesToWrite.length > 0) {
+    // Ensure all prior entries for these offerings are cleanly removed so no extra hours accumulate
+    await clearPreviousAiEntriesForBlock(supabase, versionId, offeringIds);
+
+    const naRoomId = '00000000-0000-0000-0000-000000000000';
+    const rowsToInsert = validatedEntriesToWrite.map((entry) => {
+      const off = payload.offerings.find((o) => o.id === entry.offeringId);
+      const isUnspecified = off?.subject.facilityType === 'unspecified';
       return {
         version_id: versionId,
         offering_id: entry.offeringId,
         instructor_id: entry.instructorId,
-        room_id: entry.roomId || defaultRoomId,
+        room_id: isUnspecified ? naRoomId : (entry.roomId || naRoomId),
         day_of_week: entry.dayOfWeek,
         start_time: entry.startTime.length === 5 ? `${entry.startTime}:00` : entry.startTime,
         end_time: entry.endTime.length === 5 ? `${entry.endTime}:00` : entry.endTime,
@@ -316,6 +375,11 @@ export async function executeBlockDraft(
     });
 
     try {
+      // In refine mode, now that clean entries are validated conflict-free, clear previous entries for this block
+      if (payload.preferences.isRefineMode) {
+        await clearPreviousAiEntriesForBlock(supabase, versionId, offeringIds);
+      }
+
       const { data: inserted, error: insertErr } = await supabase
         .from('schedule_entries')
         .insert(rowsToInsert)
@@ -333,11 +397,12 @@ export async function executeBlockDraft(
             console.error('Fallback insert error:', fallbackErr.message);
           } else if (fallbackInserted) {
             fallbackInserted.forEach((row) => {
+              const off = payload.offerings.find((o) => o.id === row.offering_id);
               writtenDatabaseEntries.push({
                 id: row.id,
                 offeringId: row.offering_id,
                 blockId: payload.block.id,
-                subjectId: '',
+                subjectId: off?.subject.id || '',
                 instructorId: row.instructor_id,
                 roomId: row.room_id,
                 dayOfWeek: row.day_of_week,
@@ -352,11 +417,12 @@ export async function executeBlockDraft(
         }
       } else if (inserted) {
         inserted.forEach((row) => {
+          const off = payload.offerings.find((o) => o.id === row.offering_id);
           writtenDatabaseEntries.push({
             id: row.id,
             offeringId: row.offering_id,
             blockId: payload.block.id,
-            subjectId: '',
+            subjectId: off?.subject.id || '',
             instructorId: row.instructor_id,
             roomId: row.room_id,
             dayOfWeek: row.day_of_week,

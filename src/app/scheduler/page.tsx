@@ -65,21 +65,16 @@ export default async function SchedulerDashboardPage() {
   };
 
   const bsitBlocks = bsitProgram.blocks || [];
-  const bsitStudents = bsitBlocks.reduce((acc: number, b: any) => acc + (b.student_count || 0), 0) || 149;
-
   const hsBlocks = hsProgram.blocks || [];
-  const hsStudents = hsBlocks.reduce((acc: number, b: any) => acc + (b.student_count || 0), 0) || 155;
-
   const totalCohorts = (bsitBlocks.length || 4) + (hsBlocks.length || 4);
-  const totalStudents = bsitStudents + hsStudents;
 
   return (
     <div className="d-flex flex-column gap-4">
       {/* Top Action Controls Bar (No Page Title) */}
       <div className="d-flex align-items-center justify-content-end gap-2.5">
         <Link href="/scheduler/generate" prefetch={true} className="btn-ref-secondary">
-          <i className="bi bi-stars me-1.5 text-primary" />
-          <span>AI Draft Pipeline</span>
+          <i className="bi bi-cpu me-1.5 text-primary" />
+          <span>Schedule Generator</span>
         </Link>
         <Link href="/scheduler/schedule" prefetch={true} className="btn-ref-primary">
           <i className="bi bi-calendar-plus me-1.5" />
@@ -157,7 +152,7 @@ export default async function SchedulerDashboardPage() {
           <div className="col-6 col-md-3">
             <div className="p-3 bg-light rounded-4 border border-light-subtle h-100">
               <span className="text-muted text-uppercase fw-bold" style={{ fontSize: '0.68rem', letterSpacing: '0.04em' }}>
-                Total Student Cohorts
+                Academic Cohorts
               </span>
               <div className="h4 fw-bold text-dark mt-1 mb-0">{totalCohorts} Blocks</div>
               <span className="text-secondary small" style={{ fontSize: '0.74rem' }}>

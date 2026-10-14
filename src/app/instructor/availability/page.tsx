@@ -48,6 +48,7 @@ export default async function InstructorSelfAvailabilityPage() {
       <InstructorAvailabilityClient
         instructorId={instructor.id}
         instructorName={instructor.full_name}
+        employmentType={instructor.employment_type}
         initialSlots={initialSlots}
       />
     </div>

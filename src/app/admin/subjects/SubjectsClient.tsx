@@ -1,7 +1,7 @@
 // src/app/admin/subjects/SubjectsClient.tsx
 'use client';
 
-import React, { useState, useTransition, useMemo } from 'react';
+import React, { useState, useTransition, useMemo, useEffect } from 'react';
 import type { Subject, Room } from '@/types/database';
 import { FormModal } from '@/components/FormModal';
 import {
@@ -10,6 +10,8 @@ import {
   deleteSubjectsBulkAction,
   saveSubjectsBatchAction,
   saveSubjectsOrderAction,
+  updateSubjectCategoryAction,
+  bulkUpdateSubjectCategoryAction,
   type BatchSubjectInput,
   type SubjectMetaRecord,
   type FacilityType,
@@ -44,6 +46,41 @@ export interface SubjectTableRow {
   order?: number;
 }
 
+export function isHighSchoolSubject(s: Subject, map?: Record<string, SubjectMetaRecord>): boolean {
+  if (map) {
+    const meta = (s.id ? map[s.id] : undefined) || (s.code ? map[s.code.toUpperCase()] : undefined);
+    if (meta?.category === 'high_school') return true;
+    if (meta?.category === 'bsit_major' || meta?.category === 'non_bsit_minor') return false;
+    if (meta?.yearLevel) {
+      const yl = meta.yearLevel.toLowerCase();
+      if (yl.includes('grade') || yl.includes('high school') || yl.includes('shs') || yl.includes('jhs')) {
+        return true;
+      }
+      if (yl.includes('1st') || yl.includes('2nd') || yl.includes('3rd') || yl.includes('4th') || yl.includes('5th')) {
+        return false;
+      }
+    }
+  }
+
+  const code = (s.code || '').toUpperCase().trim();
+  const title = (s.title || '').toLowerCase().trim();
+
+  if (
+    code.startsWith('HS') ||
+    code.startsWith('JHS') ||
+    code.startsWith('SHS') ||
+    code.startsWith('GRADE') ||
+    title.includes('high school') ||
+    title.includes('grade ') ||
+    title.includes('shs') ||
+    title.includes('jhs')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export function getSubjectCategory(
   s: Subject,
   map?: Record<string, SubjectMetaRecord>
@@ -53,28 +90,22 @@ export function getSubjectCategory(
     if (m && typeof m === 'object' && m.category) return m.category;
   }
 
-  const code = (s.code || '').toUpperCase().trim();
-  const title = (s.title || '').toLowerCase().trim();
-
-  // High School courses
-  if (
-    code.startsWith('HS') ||
-    code.startsWith('JHS') ||
-    code.startsWith('SHS') ||
-    code.startsWith('GRADE') ||
-    code === 'ROBOTICS' ||
-    code === 'IT 1' ||
-    title.includes('high school') ||
-    title.includes('grade ') ||
-    title.includes('shs') ||
-    title.includes('jhs')
-  ) {
+  // Check if high school
+  if (isHighSchoolSubject(s, map)) {
     return 'high_school';
   }
 
-  // IT Subjects from the College of Computer Studies Class Program & BSIT curriculum:
-  // - In PDF: ED, ITPROFEL1, CAPSTONE2, IM1, IT PROF EL 3, COMP1, OOP, PROG1, PT, HCI, GE8, NET2, GE6, OS, SIA, GEEL4, ITREVIEW, GEEL1, SAD, SA, APPSDEV
-  // - Plus BSIT curriculum: PROG 2, DATASTRUCT 1, DISCRETE 1, NET 1, WEB 1, WEB 2, IM 2, IM 3, IPT 1, IAS 1, CAPSTONE 1, RESEARCH 1, MMC, IT PROF EL 2, IT PROF EL 4, PRAC
+  // Explicit database boolean flag
+  if (s.is_bsit === true) {
+    return 'bsit_major';
+  }
+  if (s.is_bsit === false) {
+    return 'non_bsit_minor';
+  }
+
+  const code = (s.code || '').toUpperCase().trim();
+
+  // IT Subjects from the College of Computer Studies Class Program & BSIT curriculum
   const itMajorCodes = new Set([
     'APPSDEV', 'APPSDEV 1', 'CAPSTONE 1', 'CAPSTONE 2', 'COMP 1', 'COMP1', 'DATASTRUCT 1', 'DISCRETE 1',
     'ED', 'GE 6', 'GE6', 'GE 8', 'GE8', 'GEEL 1', 'GEEL1', 'GEEL 4', 'GEEL4', 'HCI', 'IAS 1', 'IM 1', 'IM1', 'IM 2', 'IM 3',
@@ -87,7 +118,7 @@ export function getSubjectCategory(
     return 'bsit_major';
   }
 
-  // All other subjects are Non-BSIT / Minor subjects (e.g. THEO 1-4, PE 1-4, NSTP 1-2, GE 1-5,7,9, GEEL 2-3, REED 1-3, MATH PREP, ACCTG, QM)
+  // All other subjects are Minor subjects (e.g. THEO 1-4, PE 1-4, NSTP 1-2, GE 1-5,7,9, GEEL 2-3, REED 1-3, MATH PREP, ACCTG, QM)
   return 'non_bsit_minor';
 }
 
@@ -125,42 +156,6 @@ export function getSubjectYearLevel(s: Subject, map?: Record<string, SubjectMeta
   if (title.includes('4th year') || title.includes('year 4')) return '4th Year';
 
   return '1st Year';
-}
-
-export function isHighSchoolSubject(s: Subject, map?: Record<string, SubjectMetaRecord>): boolean {
-  if (map) {
-    const meta = map[s.id] || map[(s.code || '').toUpperCase()];
-    if (meta?.yearLevel) {
-      const yl = meta.yearLevel.toLowerCase();
-      if (yl.includes('grade') || yl.includes('high school') || yl.includes('shs') || yl.includes('jhs')) {
-        return true;
-      }
-    }
-  }
-
-  const code = (s.code || '').toUpperCase();
-  const title = (s.title || '').toLowerCase();
-
-  if (
-    code.startsWith('HS') ||
-    code.startsWith('JHS') ||
-    code.startsWith('SHS') ||
-    code.startsWith('GRADE') ||
-    code === 'ROBOTICS' ||
-    title.includes('high school') ||
-    title.includes('grade ') ||
-    title.includes('shs') ||
-    title.includes('jhs')
-  ) {
-    return true;
-  }
-
-  if (!s.is_bsit) {
-    const cat = getSubjectCategory(s);
-    if (cat === 'high_school') return true;
-  }
-
-  return false;
 }
 
 export function getSubjectMeta(
@@ -203,12 +198,12 @@ const COLLEGE_YEAR_LEVELS = [
 ];
 
 const HIGH_SCHOOL_YEAR_LEVELS = [
-  'Grade 11 (SHS)',
-  'Grade 12 (SHS)',
   'Grade 7 (JHS)',
   'Grade 8 (JHS)',
   'Grade 9 (JHS)',
   'Grade 10 (JHS)',
+  'Grade 11 (SHS)',
+  'Grade 12 (SHS)',
 ];
 
 export function SubjectsClient({
@@ -220,6 +215,12 @@ export function SubjectsClient({
   isScheduler = false,
 }: SubjectsClientProps) {
   const [isPending, startTransition] = useTransition();
+  const [subjectsList, setSubjectsList] = useState<Subject[]>(subjects);
+
+  useEffect(() => {
+    setSubjectsList(subjects);
+  }, [subjects]);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -339,7 +340,10 @@ export function SubjectsClient({
 
   const handleOpenEdit = (sub: Subject) => {
     setEditingSubject(sub);
-    const cat = getSubjectCategory(sub);
+    let cat = getSubjectCategory(sub, metadataMap);
+    if (activeDepartment === 'college' && cat === 'high_school') {
+      cat = sub.is_bsit ? 'bsit_major' : 'non_bsit_minor';
+    }
     const meta = getSubjectMeta(sub, metadataMap);
     setTableRows([
       {
@@ -349,7 +353,7 @@ export function SubjectsClient({
         semester: meta.semester || '1st Semester',
         year_level: meta.yearLevel,
         category: cat,
-        is_bsit: sub.is_bsit,
+        is_bsit: cat === 'bsit_major',
         units: sub.units,
         lecture_hours: sub.lecture_hours,
         lab_hours: sub.lab_hours,
@@ -407,6 +411,7 @@ export function SubjectsClient({
               semester: row.semester,
               facility: row.facility,
               preferredRoomId: row.preferredRoomId || undefined,
+              category: row.category,
               order: row.order ?? 0,
             }
           );
@@ -416,6 +421,7 @@ export function SubjectsClient({
             semester: row.semester,
             facility: row.facility,
             preferredRoomId: row.preferredRoomId || undefined,
+            category: row.category,
             order: row.order ?? 0,
           };
 
@@ -424,6 +430,23 @@ export function SubjectsClient({
             [editingSubject.id]: updatedRecord,
             [row.code.trim().toUpperCase()]: updatedRecord,
           }));
+
+          setSubjectsList((prev) =>
+            prev.map((s) =>
+              s.id === editingSubject.id
+                ? {
+                    ...s,
+                    code: row.code.trim().toUpperCase(),
+                    title: row.title.trim(),
+                    units: row.units,
+                    lecture_hours: row.lecture_hours,
+                    lab_hours: row.lab_hours,
+                    requires_lab: row.facility === 'lab',
+                    is_bsit: row.category === 'bsit_major',
+                  }
+                : s
+            )
+          );
 
           setIsModalOpen(false);
           setBannerNotice({
@@ -461,6 +484,93 @@ export function SubjectsClient({
     });
   };
 
+  const handleQuickChangeCategory = (sub: Subject, newCategory: SubjectCategory) => {
+    const isBsit = newCategory === 'bsit_major';
+    const existingMeta = getSubjectMeta(sub, metadataMap);
+    const updatedMeta: SubjectMetaRecord = {
+      ...existingMeta,
+      category: newCategory,
+    };
+
+    // Optimistic local update
+    setMetadataMap((prev) => ({
+      ...prev,
+      [sub.id]: updatedMeta,
+      [(sub.code || '').toUpperCase()]: updatedMeta,
+    }));
+
+    setSubjectsList((prev) =>
+      prev.map((s) => (s.id === sub.id ? { ...s, is_bsit: isBsit } : s))
+    );
+
+    startTransition(async () => {
+      try {
+        await updateSubjectCategoryAction(sub.id, newCategory);
+        setBannerNotice({
+          type: 'success',
+          message: `Updated category for ${sub.code} to ${
+            newCategory === 'bsit_major'
+              ? 'BSIT Major'
+              : newCategory === 'high_school'
+              ? 'High School'
+              : 'Minor'
+          }.`,
+        });
+      } catch (err) {
+        setBannerNotice({
+          type: 'error',
+          message: err instanceof Error ? err.message : 'Failed to update subject category.',
+        });
+      }
+    });
+  };
+
+  const handleBulkChangeCategory = (category: SubjectCategory) => {
+    if (selectedIds.length === 0) return;
+    const isBsit = category === 'bsit_major';
+
+    const newMetaMap = { ...metadataMap };
+    for (const id of selectedIds) {
+      const sub = subjectsList.find((s) => s.id === id);
+      const existingMeta = sub ? getSubjectMeta(sub, metadataMap) : { yearLevel: '1st Year' };
+      const updatedMeta: SubjectMetaRecord = {
+        ...existingMeta,
+        category,
+      };
+      newMetaMap[id] = updatedMeta;
+      if (sub?.code) {
+        newMetaMap[sub.code.toUpperCase()] = updatedMeta;
+      }
+    }
+
+    setMetadataMap(newMetaMap);
+    setSubjectsList((prev) =>
+      prev.map((s) => (selectedIds.includes(s.id) ? { ...s, is_bsit: isBsit } : s))
+    );
+
+    startTransition(async () => {
+      try {
+        await bulkUpdateSubjectCategoryAction(selectedIds, category);
+        setBannerNotice({
+          type: 'success',
+          message: `Updated ${selectedIds.length} subjects to ${
+            category === 'bsit_major'
+              ? 'BSIT Major'
+              : category === 'high_school'
+              ? 'High School'
+              : 'Minor'
+          }.`,
+        });
+        setSelectedIds([]);
+      } catch (err) {
+        setBannerNotice({
+          type: 'error',
+          message: err instanceof Error ? err.message : 'Failed to update category in bulk.',
+        });
+      }
+    });
+  };
+
   const handleDelete = (sub: Subject) => {
     if (!confirm(`Are you sure you want to delete subject ${sub.code}?`)) return;
 
@@ -468,6 +578,7 @@ export function SubjectsClient({
       try {
         await deleteSubjectAction(sub.id);
         setSelectedIds((prev) => prev.filter((id) => id !== sub.id));
+        setSubjectsList((prev) => prev.filter((s) => s.id !== sub.id));
         setBannerNotice({
           type: 'success',
           message: `Deleted subject ${sub.code}.`,
@@ -493,6 +604,7 @@ export function SubjectsClient({
       try {
         const res = await deleteSubjectsBulkAction(idsToDelete);
         setSelectedIds([]);
+        setSubjectsList((prev) => prev.filter((s) => !idsToDelete.includes(s.id)));
         setBannerNotice({
           type: 'success',
           message: `Successfully deleted ${res.count} subject${res.count === 1 ? '' : 's'}.`,
@@ -531,7 +643,7 @@ export function SubjectsClient({
     }
 
     const currentList = subjectsByYearLevel[yearLevel] || [];
-    const draggedItem = subjects.find((s) => s.id === draggedSubjectId);
+    const draggedItem = subjectsList.find((s) => s.id === draggedSubjectId);
     if (!draggedItem) {
       setDraggedSubjectId(null);
       setDragOverSubjectId(null);
@@ -586,20 +698,20 @@ export function SubjectsClient({
 
   // Department counts
   const collegeSubjectsCount = useMemo(() => {
-    return subjects.filter((s) => !isHighSchoolSubject(s, metadataMap)).length;
-  }, [subjects, metadataMap]);
+    return subjectsList.filter((s) => !isHighSchoolSubject(s, metadataMap)).length;
+  }, [subjectsList, metadataMap]);
 
   const highSchoolSubjectsCount = useMemo(() => {
-    return subjects.filter((s) => isHighSchoolSubject(s, metadataMap)).length;
-  }, [subjects, metadataMap]);
+    return subjectsList.filter((s) => isHighSchoolSubject(s, metadataMap)).length;
+  }, [subjectsList, metadataMap]);
 
   // Active department's subjects
   const departmentSubjects = useMemo(() => {
-    return subjects.filter((s) => {
+    return subjectsList.filter((s) => {
       const isHS = isHighSchoolSubject(s, metadataMap);
       return activeDepartment === 'high_school' ? isHS : !isHS;
     });
-  }, [subjects, activeDepartment, metadataMap]);
+  }, [subjectsList, activeDepartment, metadataMap]);
 
   // Semester counts for active department
   const semesterCounts = useMemo(() => {
@@ -732,27 +844,73 @@ export function SubjectsClient({
         </div>
       )}
 
-      {/* Floating Action Bar for Bulk Deletion (Visible only when 2 or more are selected and not in scheduler mode) */}
+      {/* Floating Action Bar for Bulk Actions (Visible only when 2 or more are selected and not in scheduler mode) */}
       {!isScheduler && selectedIds.length >= 2 && (
         <div
-          className="position-fixed bottom-0 start-50 translate-middle-x mb-4 shadow-lg rounded-pill bg-dark text-white px-4 py-3 d-flex align-items-center gap-3 border border-secondary"
+          className="position-fixed bottom-0 start-50 translate-middle-x mb-4 shadow-lg rounded-pill bg-dark text-white px-4 py-2.5 d-flex align-items-center gap-3 border border-secondary"
           style={{ zIndex: 1050 }}
         >
           <div className="d-flex align-items-center gap-2">
-            <span className="badge bg-danger rounded-pill px-2.5 py-1 fw-bold">
+            <span className="badge bg-primary rounded-pill px-2.5 py-1 fw-bold">
               {selectedIds.length}
             </span>
-            <span className="small fw-semibold">subjects selected</span>
+            <span className="small fw-semibold">selected</span>
           </div>
+          <div className="vr bg-secondary opacity-50 my-1"></div>
+
+          {/* Quick Category Setter */}
+          <div className="d-flex align-items-center gap-1.5">
+            <span className="small text-white-50">Set Track:</span>
+            {!isHighSchool ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleBulkChangeCategory('bsit_major')}
+                  disabled={isPending}
+                  className="btn btn-xs btn-outline-light rounded-pill px-2.5 py-1 fw-semibold"
+                >
+                  BSIT Major
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBulkChangeCategory('non_bsit_minor')}
+                  disabled={isPending}
+                  className="btn btn-xs btn-outline-light rounded-pill px-2.5 py-1 fw-semibold"
+                >
+                  Minor
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleBulkChangeCategory('high_school')}
+                  disabled={isPending}
+                  className="btn btn-xs btn-outline-light rounded-pill px-2.5 py-1 fw-semibold"
+                >
+                  High School
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBulkChangeCategory('non_bsit_minor')}
+                  disabled={isPending}
+                  className="btn btn-xs btn-outline-light rounded-pill px-2.5 py-1 fw-semibold"
+                >
+                  Minor
+                </button>
+              </>
+            )}
+          </div>
+
           <div className="vr bg-secondary opacity-50 my-1"></div>
           <button
             type="button"
             onClick={() => handleBulkDelete(selectedIds)}
             disabled={isPending}
-            className="btn btn-sm btn-danger rounded-pill px-3.5 py-1 fw-bold d-inline-flex align-items-center gap-2"
+            className="btn btn-sm btn-danger rounded-pill px-3 py-1 fw-bold d-inline-flex align-items-center gap-1.5"
           >
             <i className="bi bi-trash3"></i>
-            <span>Delete Selected Subjects</span>
+            <span>Delete</span>
           </button>
           <button
             type="button"
@@ -1056,7 +1214,7 @@ export function SubjectsClient({
                   : 'btn-outline-secondary'
               }`}
             >
-              Non-BSIT / Minor ({trackCounts.minor})
+              Minor ({trackCounts.minor})
             </button>
           </div>
         )}
@@ -1277,14 +1435,53 @@ export function SubjectsClient({
                               <span className="fw-medium text-dark">{s.title}</span>
                             </td>
                             <td>
-                              {cat === 'bsit_major' && (
-                                <span className="pill-status pill-status-progress">BSIT Major</span>
-                              )}
-                              {cat === 'high_school' && (
-                                <span className="pill-status pill-status-review">High School</span>
-                              )}
-                              {cat === 'non_bsit_minor' && (
-                                <span className="pill-status pill-status-archived">Non-BSIT / Minor</span>
+                              {!isScheduler ? (
+                                <select
+                                  value={cat}
+                                  disabled={isPending}
+                                  onChange={(e) =>
+                                    handleQuickChangeCategory(s, e.target.value as SubjectCategory)
+                                  }
+                                  className={`form-select form-select-xs rounded-pill fw-semibold border shadow-none cursor-pointer ${
+                                    cat === 'bsit_major'
+                                      ? 'bg-primary-subtle text-primary border-primary-subtle'
+                                      : cat === 'high_school'
+                                      ? 'bg-success-subtle text-success border-success-subtle'
+                                      : 'bg-secondary-subtle text-secondary border-secondary-subtle'
+                                  }`}
+                                  style={{
+                                    fontSize: '0.78rem',
+                                    padding: '0.2rem 1.75rem 0.2rem 0.75rem',
+                                    width: 'auto',
+                                    display: 'inline-block',
+                                  }}
+                                  title="Change track / category"
+                                >
+                                  {isHighSchool ? (
+                                    <>
+                                      <option value="high_school">High School</option>
+                                      <option value="non_bsit_minor">Minor</option>
+                                      <option value="bsit_major">BSIT Major</option>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <option value="bsit_major">BSIT Major</option>
+                                      <option value="non_bsit_minor">Minor</option>
+                                    </>
+                                  )}
+                                </select>
+                              ) : (
+                                <>
+                                  {cat === 'bsit_major' && (
+                                    <span className="pill-status pill-status-progress">BSIT Major</span>
+                                  )}
+                                  {cat === 'high_school' && (
+                                    <span className="pill-status pill-status-review">High School</span>
+                                  )}
+                                  {cat === 'non_bsit_minor' && (
+                                    <span className="pill-status pill-status-archived">Minor</span>
+                                  )}
+                                </>
                               )}
                             </td>
                             <td className="text-center font-monospace fw-bold text-dark">
@@ -1576,7 +1773,7 @@ export function SubjectsClient({
                   </td>
                   <td className="cell-grid-td">
                     <select
-                      value={row.category}
+                      value={!isHighSchool && row.category === 'high_school' ? 'bsit_major' : row.category}
                       disabled={isScheduler}
                       onChange={(e) => {
                         const cat = e.target.value as SubjectCategory;
@@ -1588,14 +1785,13 @@ export function SubjectsClient({
                       {isHighSchool ? (
                         <>
                           <option value="high_school">High School</option>
-                          <option value="non_bsit_minor">Non-BSIT / Minor</option>
+                          <option value="non_bsit_minor">Minor</option>
                           <option value="bsit_major">BSIT Major</option>
                         </>
                       ) : (
                         <>
                           <option value="bsit_major">BSIT Major</option>
-                          <option value="non_bsit_minor">Non-BSIT / Minor</option>
-                          <option value="high_school">High School</option>
+                          <option value="non_bsit_minor">Minor</option>
                         </>
                       )}
                     </select>
@@ -1693,7 +1889,7 @@ export function SubjectsClient({
         <div className="bg-light p-3 rounded-4 border d-flex align-items-center gap-2.5 mb-3">
           <i className="bi bi-info-circle-fill text-primary fs-5"></i>
           <p className="small text-secondary mb-0">
-            <strong>Unspecified Facility:</strong> This subject can be scheduled across any currently available room at the instructor&apos;s decision. The AlterSched conflict engine guarantees that assigned slots will strictly prevent room collisions and capacity overflows.
+            <strong>Unspecified Facility:</strong> This subject can be scheduled across any currently available room at the instructor&apos;s decision. The AlterSched conflict engine guarantees that assigned slots will strictly prevent room collisions and scheduling conflicts.
           </p>
         </div>
 

@@ -66,11 +66,51 @@ const DEFAULT_CONFIGS: YearLevelGroup[] = [
     isHighSchool: false,
   },
   {
+    id: 'hs-7',
+    deptCode: 'HS',
+    deptName: 'High School Department',
+    yearLevelNum: 1,
+    title: 'Grade 7 (JHS)',
+    subTitle: 'Junior High School Grade 7 foundation courses and exploratory technology',
+    targetSubjectsYearLevel: 'Grade 7 (JHS)',
+    isHighSchool: true,
+  },
+  {
+    id: 'hs-8',
+    deptCode: 'HS',
+    deptName: 'High School Department',
+    yearLevelNum: 2,
+    title: 'Grade 8 (JHS)',
+    subTitle: 'Junior High School Grade 8 intermediate academic subjects and basic computing',
+    targetSubjectsYearLevel: 'Grade 8 (JHS)',
+    isHighSchool: true,
+  },
+  {
+    id: 'hs-9',
+    deptCode: 'HS',
+    deptName: 'High School Department',
+    yearLevelNum: 3,
+    title: 'Grade 9 (JHS)',
+    subTitle: 'Junior High School Grade 9 core curriculum and specialized technology topics',
+    targetSubjectsYearLevel: 'Grade 9 (JHS)',
+    isHighSchool: true,
+  },
+  {
+    id: 'hs-10',
+    deptCode: 'HS',
+    deptName: 'High School Department',
+    yearLevelNum: 4,
+    title: 'Grade 10 (JHS)',
+    subTitle: 'Junior High School Grade 10 graduating cohort preparing for senior high tracks',
+    targetSubjectsYearLevel: 'Grade 10 (JHS)',
+    isHighSchool: true,
+  },
+  {
     id: 'hs-11',
     deptCode: 'HS',
     deptName: 'High School Department',
     yearLevelNum: 3,
-    title: 'Grade 11 - STEM & TVL',
+    title: 'Grade 11 (SHS) - STEM & TVL',
     subTitle: 'Senior High School Grade 11 specialized academic tracks (Pre-Calculus & TVL-ICT)',
     targetSubjectsYearLevel: 'Grade 11 (SHS)',
     isHighSchool: true,
@@ -80,7 +120,7 @@ const DEFAULT_CONFIGS: YearLevelGroup[] = [
     deptCode: 'HS',
     deptName: 'High School Department',
     yearLevelNum: 4,
-    title: 'Grade 12 - STEM & TVL',
+    title: 'Grade 12 (SHS) - STEM & TVL',
     subTitle: 'Senior High School Grade 12 graduating projects and computer systems servicing NC II',
     targetSubjectsYearLevel: 'Grade 12 (SHS)',
     isHighSchool: true,
@@ -109,7 +149,7 @@ export async function saveYearLevelConfig(input: YearLevelInput): Promise<YearLe
   const existingIndex = current.findIndex(
     (c) =>
       c.deptCode.toUpperCase() === input.deptCode.toUpperCase() &&
-      c.yearLevelNum === input.yearLevelNum
+      (c.title === input.title || (c.yearLevelNum === input.yearLevelNum && c.targetSubjectsYearLevel === input.targetSubjectsYearLevel))
   );
 
   const entry: YearLevelGroup = {
@@ -129,9 +169,14 @@ export async function saveYearLevelConfig(input: YearLevelInput): Promise<YearLe
     current.push(entry);
   }
 
-  // Sort by dept and year level
+  // Sort by dept and year level / grade level
   current.sort((a, b) => {
     if (a.deptCode !== b.deptCode) return a.deptCode.localeCompare(b.deptCode);
+    const gradeA = (a.title.match(/Grade\s*(\d+)/i) || a.targetSubjectsYearLevel.match(/Grade\s*(\d+)/i))?.[1];
+    const gradeB = (b.title.match(/Grade\s*(\d+)/i) || b.targetSubjectsYearLevel.match(/Grade\s*(\d+)/i))?.[1];
+    if (gradeA && gradeB) {
+      return parseInt(gradeA) - parseInt(gradeB);
+    }
     return a.yearLevelNum - b.yearLevelNum;
   });
 

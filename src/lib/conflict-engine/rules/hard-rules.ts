@@ -74,7 +74,9 @@ export function checkHardRules(
   // 2. ROOM OVERLAP: Same room, same day, overlapping time
   const roomDayMap = new Map<string, ScheduleEntryInput[]>();
   for (const entry of entries) {
-    if (!entry.roomId) continue;
+    if (!entry.roomId || entry.roomId === '00000000-0000-0000-0000-000000000000') continue;
+    const room = roomsMap.get(entry.roomId);
+    if (room?.name === 'None (N/A)' || room?.name === 'TBA (N/A)') continue;
     const subject = subjectsMap.get(entry.subjectId);
     // Subjects with unspecified facility/room type do not need a specific room: do not mark as room conflict
     if (subject?.facilityType === 'unspecified') continue;
@@ -146,6 +148,9 @@ export function checkHardRules(
 
   // 4. FIXED CONSTRAINT CLASH: Overlaps fixed_constraints on room/day/time
   for (const entry of entries) {
+    if (!entry.roomId || entry.roomId === '00000000-0000-0000-0000-000000000000') continue;
+    const room = roomsMap.get(entry.roomId);
+    if (room?.name === 'None (N/A)' || room?.name === 'TBA (N/A)') continue;
     const subject = subjectsMap.get(entry.subjectId);
     if (subject?.facilityType === 'unspecified') continue;
 
@@ -174,28 +179,7 @@ export function checkHardRules(
     }
   }
 
-  // 5. CAPACITY EXCEEDED: room.capacity < block.studentCount
-  for (const entry of entries) {
-    if (!entry.roomId) continue;
-    const subject = subjectsMap.get(entry.subjectId);
-    if (subject?.facilityType === 'unspecified') continue;
-
-    const room = roomsMap.get(entry.roomId);
-    const block = blocksMap.get(entry.blockId);
-
-    if (room && block && room.capacity < block.studentCount) {
-      const roomName = room.name || 'Selected room';
-      const blockName = block.name || 'Block';
-      violations.push({
-        severity: 'hard',
-        rule: 'capacity_exceeded',
-        message: `Capacity overflow: ${roomName} holds max ${room.capacity} students, but ${blockName} has ${block.studentCount} students.`,
-        entryIds: [entry.id],
-      });
-    }
-  }
-
-  // 6. INSTRUCTOR UNAVAILABLE: Outside availability windows for that day
+  // 5. INSTRUCTOR UNAVAILABLE: Outside availability windows for that day
   for (const entry of entries) {
     const instructor = instructorsMap.get(entry.instructorId);
     if (!instructor) continue;
@@ -226,7 +210,7 @@ export function checkHardRules(
     }
   }
 
-  // 7. DUPLICATE SUBJECT IN BLOCK: Same subject assigned to same block across multiple offerings
+  // 6. DUPLICATE SUBJECT IN BLOCK: Same subject assigned to same block across multiple offerings
   const blockSubjectOfferings = new Map<string, { offeringIds: Set<string>; entryIds: string[] }>();
   for (const entry of entries) {
     const key = `${entry.blockId}:${entry.subjectId}`;
@@ -255,7 +239,7 @@ export function checkHardRules(
     }
   }
 
-  // 8. INCOMPLETE HOURS: sum of scheduled minutes != (lecture_hours + lab_hours) * 60
+  // 7. INCOMPLETE HOURS: sum of scheduled minutes != (lecture_hours + lab_hours) * 60
   // Group by offering (or blockId + subjectId)
   const offeringMinutesMap = new Map<
     string,
@@ -280,7 +264,11 @@ export function checkHardRules(
     const subject = subjectsMap.get(record.subjectId);
     if (!subject) continue;
 
-    const requiredMinutes = (subject.lectureHours + subject.labHours) * 60;
+    const totalHours =
+      subject.lectureHours + subject.labHours > 0
+        ? subject.lectureHours + subject.labHours
+        : (subject.units || 0);
+    const requiredMinutes = totalHours * 60;
     if (record.totalMinutes !== requiredMinutes) {
       const block = blocksMap.get(record.blockId);
       const blockName = block?.name || 'Block';
@@ -297,7 +285,7 @@ export function checkHardRules(
     }
   }
 
-  // 9. INVALID TIME SLOT: start_time and lab end_time must match canonical TIME_SLOTS grid
+  // 8. INVALID TIME SLOT: start_time and lab end_time must match canonical TIME_SLOTS grid
   for (const entry of entries) {
     const normStart = formatTimeShort(entry.startTime);
     const normEnd = formatTimeShort(entry.endTime);
@@ -314,15 +302,89 @@ export function checkHardRules(
         entryIds: [entry.id],
       });
     } else if (entry.dayOfWeek >= 1 && entry.dayOfWeek <= 6) {
-      // Monday through Saturday (single canonical grid: 8:00, 9:30, 11:00, 1:00, 2:30, 4:00, 5:30, 7:00)
-      const isValidStart = (TIME_SLOTS.startTimes as readonly string[]).includes(normStart);
+      const block = blocksMap.get(entry.blockId);
+      const subject = subjectsMap.get(entry.subjectId);
+      const subCode = (subject?.code || '').toUpperCase().trim();
+      const subTitle = (subject?.title || '').toLowerCase();
+      const blkName = (block?.name || '').toLowerCase();
+      const isHsEntry =
+        blkName.includes('grade') ||
+        blkName.includes('high school') ||
+        (block?.name || '').toUpperCase().startsWith('HS') ||
+        subCode.startsWith('HS') ||
+        subCode.startsWith('JHS') ||
+        subCode.startsWith('SHS') ||
+        subCode.startsWith('GRADE') ||
+        subCode === 'ROBOTICS' ||
+        subCode === 'IT 1' ||
+        subCode === 'ARDUINO' ||
+        subTitle.includes('junior high') ||
+        subTitle.includes('senior high') ||
+        subTitle.includes('grade ');
+
+      const isOneOrTwoUnitSubject = Boolean(
+        subject && (
+          subject.units === 1 ||
+          subject.units === 2 ||
+          (subject.lectureHours + subject.labHours === 1) ||
+          (subject.lectureHours + subject.labHours === 2) ||
+          (subject.lectureHours === 1 && subject.labHours === 0) ||
+          (subject.lectureHours === 2 && subject.labHours === 0) ||
+          /^(PE|PATHFIT|NSTP)/i.test(subject.code || '') ||
+          /^(Physical Education|PATHFit)/i.test(subject.title || '')
+        )
+      );
+
+      const hsStarts = [
+        '07:00',
+        '07:30',
+        '08:00',
+        '08:30',
+        '09:00',
+        '09:30',
+        '10:00',
+        '10:30',
+        '11:00',
+        '13:00',
+        '13:30',
+        '14:00',
+        '14:30',
+        '15:00',
+      ];
+      const hourlyStarts = [
+        '08:00',
+        '09:00',
+        '10:00',
+        '11:00',
+        '12:00',
+        '13:00',
+        '14:00',
+        '15:00',
+        '16:00',
+        '17:00',
+        '18:00',
+      ];
+      const validStartTimes = isHsEntry
+        ? Array.from(new Set([...hsStarts, ...(TIME_SLOTS.startTimes as readonly string[])]))
+        : isOneOrTwoUnitSubject
+        ? Array.from(new Set([...(TIME_SLOTS.startTimes as readonly string[]), ...hourlyStarts]))
+        : (TIME_SLOTS.startTimes as readonly string[]);
+
+      const isValidStart = validStartTimes.includes(normStart);
       const isValidEnd = (TIME_SLOTS.slotBoundaries as readonly string[]).includes(normEnd);
 
-      if (!isValidStart) {
+      if (isHsEntry && (normStart < '07:00' || normEnd > '16:00')) {
         violations.push({
           severity: 'hard',
           rule: 'invalid_time_slot',
-          message: `Invalid start time "${normStart}" on ${getDayName(entry.dayOfWeek)}. Sessions must start at one of: ${TIME_SLOTS.startTimes.join(', ')}.`,
+          message: `High School class session on ${getDayName(entry.dayOfWeek)} (${formatTimeShort(normStart)}-${formatTimeShort(normEnd)}) is outside the High School timetable window (7:00 AM to 4:00 PM).`,
+          entryIds: [entry.id],
+        });
+      } else if (!isValidStart) {
+        violations.push({
+          severity: 'hard',
+          rule: 'invalid_time_slot',
+          message: `Invalid start time "${normStart}" on ${getDayName(entry.dayOfWeek)}. Sessions must start at one of: ${validStartTimes.join(', ')}.`,
           entryIds: [entry.id],
         });
       } else if (!isValidEnd) {
@@ -339,7 +401,7 @@ export function checkHardRules(
           message: `Invalid session duration (${durationMin} min) on ${getDayName(entry.dayOfWeek)}. Sessions must align to standard academic slot increments.`,
           entryIds: [entry.id],
         });
-      } else if (entry.sessionType === 'lab' && durationMin % TIME_SLOTS.standardDurationMinutes !== 0) {
+      } else if (!isOneOrTwoUnitSubject && entry.sessionType === 'lab' && durationMin % TIME_SLOTS.standardDurationMinutes !== 0) {
         violations.push({
           severity: 'hard',
           rule: 'invalid_time_slot',
@@ -350,23 +412,55 @@ export function checkHardRules(
     }
   }
 
-  // 10. SPANS LUNCH BREAK: no single entry may have start < 12:30 and end > 13:00 (crosses 12:30-13:00)
+  // 9. SPANS LUNCH BREAK:
+  // - College: no single entry may overlap 12:30-13:00 (must conclude by 12:30 or start at/after 13:00)
+  // - High School: no single entry may overlap 12:00-13:00 (must conclude by 12:00 or start at/after 13:00)
   for (const entry of entries) {
+    const block = blocksMap.get(entry.blockId);
+    const subject = subjectsMap.get(entry.subjectId);
+    const subCode = (subject?.code || '').toUpperCase().trim();
+    const subTitle = (subject?.title || '').toLowerCase();
+    const blkName = (block?.name || '').toLowerCase();
+    const isHsEntry =
+      blkName.includes('grade') ||
+      blkName.includes('high school') ||
+      (block?.name || '').toUpperCase().startsWith('HS') ||
+      subCode.startsWith('HS') ||
+      subCode.startsWith('JHS') ||
+      subCode.startsWith('SHS') ||
+      subCode.startsWith('GRADE') ||
+      subCode === 'ROBOTICS' ||
+      subCode === 'IT 1' ||
+      subCode === 'ARDUINO' ||
+      subTitle.includes('junior high') ||
+      subTitle.includes('senior high') ||
+      subTitle.includes('grade ');
+
+    const lunchWindow = isHsEntry
+      ? TIME_SLOTS.hsLunchBreak
+      : TIME_SLOTS.lunchBreak;
+
     if (
       timeRangesOverlap(
         entry.startTime,
         entry.endTime,
-        TIME_SLOTS.lunchBreak.startTime,
-        TIME_SLOTS.lunchBreak.endTime
+        lunchWindow.startTime,
+        lunchWindow.endTime
       )
     ) {
       const dayName = getDayName(entry.dayOfWeek);
+      const deptLabel = isHsEntry ? 'High School class session' : 'Class session';
+      const breakLabel = isHsEntry
+        ? 'High School lunch break (12:00-13:00)'
+        : 'institutional lunch break (12:30-13:00)';
+      const concludeLabel = isHsEntry ? '12:00' : '12:30';
+
       violations.push({
         severity: 'hard',
         rule: 'spans_lunch_break',
-        message: `Class session on ${dayName} (${formatTimeShort(entry.startTime)}-${formatTimeShort(
+        message: `${deptLabel} on ${dayName} (${formatTimeShort(entry.startTime)}-${formatTimeShort(
           entry.endTime
-        )}) crosses the institutional lunch break (12:30-13:00). Sessions must conclude by 12:30 or begin at/after 13:00.`,
+        )}) crosses the ${breakLabel}. Sessions must conclude by ${concludeLabel} or begin at/after 13:00.`,
         entryIds: [entry.id],
       });
     }

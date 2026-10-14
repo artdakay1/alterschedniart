@@ -151,6 +151,7 @@ async function runVerification() {
       id: s.id,
       code: s.code,
       title: s.title,
+      units: s.units,
       requiresLab: s.requires_lab,
       lectureHours: s.lecture_hours,
       labHours: s.lab_hours,

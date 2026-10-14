@@ -16,6 +16,8 @@
     "verify:phase5": "node --experimental-strip-types scripts/verify-phase5.mjs",
     "verify:phase6": "node --experimental-strip-types scripts/verify-phase6.mjs",
     "verify:phase7": "node --experimental-strip-types scripts/verify-phase7.mjs",
+    "diagnose:unplaced": "node scripts/maintenance/diagnose-unplaced.mjs",
+    "balance:quals": "node scripts/maintenance/balance-qualifications.mjs",
     "test": "node --experimental-strip-types --test src/lib/conflict-engine/__tests__/conflict-engine.test.mjs"
   },
   "dependencies": {

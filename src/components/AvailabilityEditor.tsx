@@ -7,6 +7,7 @@ import type { InstructorAvailabilitySlotInput } from '@/lib/validators/academic'
 interface AvailabilityEditorProps {
   instructorId: string;
   instructorName: string;
+  employmentType?: 'full_time' | 'part_time';
   initialSlots: InstructorAvailabilitySlotInput[];
   onSave: (slots: InstructorAvailabilitySlotInput[]) => Promise<void>;
   isReadOnly?: boolean;
@@ -46,6 +47,30 @@ function addThirtyMin(t: string): string {
   return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
 }
 
+// Standard full-time schedule: 8:00 AM to 8:30 PM, with 12:30 PM - 1:00 PM lunch break blocked
+export function getFullTimeDefaultSlots(): InstructorAvailabilitySlotInput[] {
+  const slots: InstructorAvailabilitySlotInput[] = [];
+  for (const day of DAYS) {
+    // Morning window: 08:00 to 12:30
+    slots.push({
+      day_of_week: day.value,
+      start_time: '08:00:00',
+      end_time: '12:30:00',
+    });
+    // Afternoon/Evening window: 13:00 to 20:30 (12:30 to 13:00 is blocked lunch break)
+    slots.push({
+      day_of_week: day.value,
+      start_time: '13:00:00',
+      end_time: '20:30:00',
+    });
+  }
+  return slots;
+}
+
+export function getFullTimeDefaultGrid(): Set<string> {
+  return slotsToGrid(getFullTimeDefaultSlots());
+}
+
 // Convert slots (which can span hours) to a set of "day:startTime" 30-min cells
 function slotsToGrid(slots: InstructorAvailabilitySlotInput[]): Set<string> {
   const grid = new Set<string>();
@@ -64,8 +89,10 @@ function slotsToGrid(slots: InstructorAvailabilitySlotInput[]): Set<string> {
 function gridToSlots(grid: Set<string>): InstructorAvailabilitySlotInput[] {
   const byDay: Record<number, string[]> = {};
   for (const cell of grid) {
-    const [dayStr, time] = cell.split(':');
-    const day = parseInt(dayStr);
+    const firstColon = cell.indexOf(':');
+    if (firstColon === -1) continue;
+    const day = parseInt(cell.slice(0, firstColon));
+    const time = cell.slice(firstColon + 1);
     if (!byDay[day]) byDay[day] = [];
     byDay[day].push(time);
   }
@@ -104,6 +131,7 @@ function gridToSlots(grid: Set<string>): InstructorAvailabilitySlotInput[] {
 
 export function AvailabilityEditor({
   instructorName,
+  employmentType = 'full_time',
   initialSlots,
   onSave,
   isReadOnly = false,
@@ -112,12 +140,24 @@ export function AvailabilityEditor({
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
 
   // Grid state: a Set<"day:time"> for all available 30-min blocks
-  const [grid, setGrid] = useState<Set<string>>(() => slotsToGrid(initialSlots));
+  const [grid, setGrid] = useState<Set<string>>(() => {
+    if (initialSlots && initialSlots.length > 0) {
+      return slotsToGrid(initialSlots);
+    }
+    if (employmentType === 'full_time') {
+      return getFullTimeDefaultGrid();
+    }
+    return new Set<string>();
+  });
+
+  const applyFullTimeDefault = () => {
+    if (isReadOnly) return;
+    setGrid(getFullTimeDefaultGrid());
+  };
 
   // Drag selection state
   const [isDragging, setIsDragging] = useState(false);
   const [dragMode, setDragMode] = useState<'add' | 'remove'>('add');
-  const [dragStart, setDragStart] = useState<string | null>(null);
 
   const toggleCell = (key: string, forceMode?: 'add' | 'remove') => {
     setGrid((prev) => {
@@ -133,7 +173,6 @@ export function AvailabilityEditor({
     if (isReadOnly) return;
     const mode = grid.has(key) ? 'remove' : 'add';
     setDragMode(mode);
-    setDragStart(key);
     setIsDragging(true);
     toggleCell(key, mode);
   };
@@ -145,7 +184,6 @@ export function AvailabilityEditor({
 
   const handleMouseUp = () => {
     setIsDragging(false);
-    setDragStart(null);
   };
 
   // Select/deselect entire day column
@@ -275,6 +313,19 @@ export function AvailabilityEditor({
             />
             <span>Unavailable</span>
           </div>
+          <div className="d-flex align-items-center gap-1.5">
+            <span
+              style={{
+                display: 'inline-block',
+                width: 14,
+                height: 14,
+                borderRadius: 3,
+                background: '#fef3c7',
+                border: '1px solid #fde68a',
+              }}
+            />
+            <span className="text-warning-emphasis fw-medium">Lunch Break (12:30–1:00 PM)</span>
+          </div>
           <span className="text-muted">
             <i className="bi bi-hand-index me-1" />
             Click or drag to toggle
@@ -291,6 +342,15 @@ export function AvailabilityEditor({
                 </span>
               )}
             </span>
+            <button
+              type="button"
+              onClick={applyFullTimeDefault}
+              className="btn btn-xs btn-primary rounded-pill px-3 py-1 small fw-semibold shadow-sm"
+              title="Apply standard Full-Time availability: 8:00 AM to 8:30 PM (Mon-Sat), with 12:30 PM - 1:00 PM lunch break blocked"
+            >
+              <i className="bi bi-clock-history me-1"></i>
+              Full-Time Default (8am–8:30pm)
+            </button>
             <button
               type="button"
               onClick={selectAll}
@@ -385,7 +445,7 @@ export function AvailabilityEditor({
             </tr>
           </thead>
           <tbody>
-            {TIME_SLOTS.map((time, rowIdx) => {
+            {TIME_SLOTS.map((time) => {
               const isHour = time.endsWith(':00');
               const allRowSelected = DAYS.every((d) => grid.has(`${d.value}:${time}`));
               return (
@@ -394,22 +454,22 @@ export function AvailabilityEditor({
                   <td
                     onClick={() => toggleRow(time)}
                     style={{
-                      background: allRowSelected ? 'rgba(14,10,184,0.04)' : isHour ? '#f8fafc' : '#fcfcfd',
+                      background: time === '12:30' ? '#fef3c7' : allRowSelected ? 'rgba(14,10,184,0.04)' : isHour ? '#f8fafc' : '#fcfcfd',
                       borderRight: '1px solid #e2e8f0',
                       borderBottom: '1px solid ' + (isHour ? '#d1d5db' : '#f1f5f9'),
                       padding: '0 8px',
                       height: isHour ? 30 : 22,
                       textAlign: 'right',
                       fontFamily: 'monospace',
-                      fontSize: isHour ? '11px' : '9.5px',
-                      color: isHour ? '#374151' : '#94a3b8',
-                      fontWeight: isHour ? 700 : 400,
+                      fontSize: isHour ? '11px' : time === '12:30' ? '9px' : '9.5px',
+                      color: time === '12:30' ? '#92400e' : isHour ? '#374151' : '#94a3b8',
+                      fontWeight: isHour || time === '12:30' ? 700 : 400,
                       cursor: isReadOnly ? 'default' : 'pointer',
                       whiteSpace: 'nowrap',
                     }}
-                    title={`Click to toggle ${formatTime(time)} across all days`}
+                    title={time === '12:30' ? 'Strict Lunch Break (12:30 PM - 1:00 PM)' : `Click to toggle ${formatTime(time)} across all days`}
                   >
-                    {isHour ? formatTime(time) : '· · ·'}
+                    {isHour ? formatTime(time) : time === '12:30' ? '12:30 Lunch' : '· · ·'}
                   </td>
                   {DAYS.map((day) => {
                     const key = `${day.value}:${time}`;
@@ -422,6 +482,8 @@ export function AvailabilityEditor({
                         style={{
                           background: isActive
                             ? 'rgba(14,10,184,0.75)'
+                            : time === '12:30'
+                            ? '#fffbeb'
                             : isHour
                             ? '#f9fafb'
                             : '#ffffff',
@@ -431,7 +493,7 @@ export function AvailabilityEditor({
                           cursor: isReadOnly ? 'default' : 'pointer',
                           transition: 'background 0.08s',
                         }}
-                        title={`${day.label} ${formatTime(time)}${isActive ? ' (Available)' : ' (Unavailable)'}`}
+                        title={`${day.label} ${formatTime(time)}${isActive ? ' (Available)' : time === '12:30' ? ' (Lunch Break)' : ' (Unavailable)'}`}
                       />
                     );
                   })}
@@ -440,34 +502,6 @@ export function AvailabilityEditor({
             })}
           </tbody>
         </table>
-      </div>
-
-      {/* Summary per day */}
-      <div className="d-flex flex-wrap gap-2 pt-1">
-        {DAYS.map((day) => {
-          const count = daySlotCounts[day.value] || 0;
-          const slots = gridToSlots(new Set([...grid].filter((k) => k.startsWith(`${day.value}:`))));
-          return (
-            <div
-              key={day.value}
-              className={`px-3 py-1.5 rounded-3 small d-flex align-items-center gap-2 border ${
-                count > 0
-                  ? 'bg-primary-subtle border-primary-subtle text-primary'
-                  : 'bg-light border-light-subtle text-muted'
-              }`}
-              style={{ fontSize: '11.5px' }}
-            >
-              <span className="fw-bold">{day.label}</span>
-              {count > 0 ? (
-                <span>
-                  {slots.map((s) => `${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}`).join(', ')}
-                </span>
-              ) : (
-                <span className="fst-italic opacity-75">Unavailable</span>
-              )}
-            </div>
-          );
-        })}
       </div>
 
       {!isReadOnly && (

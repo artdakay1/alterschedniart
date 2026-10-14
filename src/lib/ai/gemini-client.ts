@@ -30,27 +30,47 @@ function buildGeminiPrompt(
 ): string {
   const { block, offerings, fixedConstraints, existingEntries, preferences } = payload;
 
-  let prompt = `You are an expert academic timetable scheduler for a university BSIT department.
+  const isHs =
+    (block.name || '').toLowerCase().includes('grade') ||
+    (block.name || '').toLowerCase().includes('high school') ||
+    (block.name || '').toUpperCase().startsWith('HS') ||
+    offerings.some((o) => (o.subject.code || '').startsWith('HS') || (o.subject.code || '').startsWith('JHS') || (o.subject.code || '').startsWith('SHS'));
+
+  let prompt = `You are an expert academic timetable scheduler for a ${isHs ? 'High School department' : 'university BSIT department'}.
 Your task is to assign timetable slots for student block: ${block.name} (${block.studentCount} students).
 
 ${SCHEDULING_POLICY_TEXT}
 
 CRITICAL CONSTRAINTS (ZERO HARD VIOLATIONS ALLOWED):
-1. REQUIRED HOURS: Schedule exact required hours for each offering: lecture hours in a lecture or laboratory room, lab hours in a laboratory room. If an offering has 3 lec + 1 lab, schedule BOTH sessions.
-2. 2-DAY SCHEDULE SPLIT vs SINGLE CONTINUOUS SESSIONS:
-   - CRITICAL CONSTRAINT: NEVER SPLIT subjects with 1 or 2 hours! Subjects with 1 or 2 hours of units/lecture/lab (such as 2-hour PE 1, PE 2, PE 3, PATHFit, 1-hour or 2-hour labs, etc.) MUST ALWAYS be scheduled as a SINGLE CONTINUOUS SESSION on a SINGLE DAY for their exact full duration.
-   - ONLY 3-hour lecture subjects (subjects with lectureHours === 3) can be split across 2 days:
+1. REQUIRED HOURS & UNITS CONSTRAINTS (NEVER OVER-SCHEDULE):
+   - Read the units and required weekly hours for each course from "AVAILABLE OFFERINGS TO SCHEDULE".
+   - You MUST schedule EXACTLY the total required hours (lectureHours + labHours).
+   - NEVER add more hours than indicated in the subject's curriculum units!
+   - For a 1-unit subject with 1h lecture (such as ROBOTICS, IT 1, or ARDUINO), schedule EXACTLY ONE 1-hour session (60 minutes). NEVER schedule 2 hours, NEVER duplicate the session across days, and NEVER exceed 1 hour total!
+   - For a 2-unit course with 2 hours (such as PE / PATHFit), schedule EXACTLY ONE 2-hour session (120 minutes) on a single day.
+2. DAY PAIRING CONVENTION (MW and TTH):
+   - Standard timetable slots follow the 2-day pairing convention:
      * Monday and Wednesday (MW: dayOfWeek 1 & 3)
      * Tuesday and Thursday (TTH: dayOfWeek 2 & 4)
-     * Schedule two 1.5-hour sessions (90 mins each) on either MW OR TTH at the SAME time and in the SAME room (e.g. 08:00-09:30, 09:30-11:00, 11:00-12:30, 13:00-14:30, 14:30-16:00, or 16:00-17:30).
-   - For courses with 3h lecture + 1h lab: schedule the lecture on MW or TTH (1.5h on each day), and schedule the laboratory session as a single continuous session on Friday (day 5) or Saturday (day 6) in a computer laboratory room.
-3. ROOM ASSIGNMENT & CAPACITY:
+   - For 3-unit courses with 1.5h lecture and 1.5h lab (e.g. HCI, PROG 1, COMP 1, OOP, IM 1):
+     * Schedule the 1.5-hour lecture session on Day 1 of the pair (Monday or Tuesday) in a lecture room.
+     * Schedule the 1.5-hour laboratory session on Day 2 of the pair (Wednesday or Thursday) at the EXACT SAME TIME in a computer lab.
+   - For 3-hour pure lecture courses (lectureHours === 3, labHours === 0, such as GE 1, GE 2, THEO 1):
+     * Schedule two 1.5-hour lecture sessions across the pair (Monday & Wednesday OR Tuesday & Thursday) at the EXACT SAME TIME in a lecture room.
+   - For single-session courses with 1 or 2 hours (such as 2-hour PE / PATHFit / NSTP):
+     * MUST ALWAYS be scheduled as a single continuous session on a single day for their exact duration. NEVER split 1 or 2 hour courses!
+     * PE (Physical Education / PATHFit) and NSTP (ROTC / CWTS) MUST be prioritized for placement on Saturday first, then Friday. Only place them on Monday–Thursday if Saturday and Friday are full or unavailable.
+3. ROOM ASSIGNMENT:
    - If an offering's subject has facilityType === 'unspecified', it does NOT require a specific room: roomId may be null (or omitted) and will not cause a room availability conflict.
-   - For all other subjects (lecture or lab), assign an eligible room from the offering's eligibleRooms list where room capacity >= block student count (${block.studentCount}).
+   - For all other subjects (lecture or lab), assign an eligible room from the offering's eligibleRooms list. If a lecture room is fully booked, a computer lab may be used as a lecture room.
 4. INSTRUCTOR QUALIFICATION & AVAILABILITY: You must ONLY assign instructors listed in each offering's "qualifiedInstructors". Assigning an unqualified instructor is STRICTLY FORBIDDEN! If an offering has no qualified instructors, do not assign an instructor to it. The instructor must also be available during the assigned day/time.
 5. NO OVERLAPS: No instructor, room, or student block overlaps! A student block CANNOT have two classes at the same time on the same day.
 6. NO BLACKOUT CLASH: Do not overlap with any fixed constraints/blackout periods.
-7. CANONICAL TIMESLOTS & LUNCH BREAK: All entries must start at one of: 08:00, 09:30, 11:00, 13:00, 14:30, 16:00, 17:30, 19:00 (applies every day, including Saturday — no separate Saturday grid). No class may cross or span the 12:30-13:00 lunch break. Morning classes must conclude by 12:30. Afternoon classes start at or after 13:00.
+${
+  isHs
+    ? `7. HIGH SCHOOL SCHEDULE HOURS & LUNCH BREAK: All High School classes must be scheduled strictly between 07:00 (7:00 AM) and 16:00 (4:00 PM). LUNCH BREAK IS STRICTLY 12:00 to 13:00 (12:00 PM - 1:00 PM). No class may cross or span the 12:00-13:00 lunch break! Morning classes must conclude by 12:00. Afternoon classes start at or after 13:00.`
+    : `7. CANONICAL TIMESLOTS & LUNCH BREAK (CRITICAL HARD CONSTRAINT): All entries must start at one of these EXACT start times: 08:00, 09:30, 11:00, 13:00, 14:30, 16:00, 17:30, 19:00 (applies every day, including Saturday — no separate Saturday grid). Starting at 10:00, 12:00, 14:00, or 15:00 is STRICTLY FORBIDDEN and will cause instant schedule rejection! No class may cross or span the 12:30-13:00 lunch break. Morning classes must conclude by 12:30. Afternoon classes start at or after 13:00.`
+}
 8. INSTRUCTOR WORKLOAD BALANCE: Distribute subjects across different qualified instructors. Do NOT assign all subjects to one instructor! Maximum recommended teaching time per instructor is 6 hours in a single day.
 9. ROOM BALANCE: Distribute lecture classes across available lecture rooms rather than placing all classes in the same room.
 10. WEEKLY SPREAD: Distribute classes evenly across the week (Monday through Friday).
@@ -64,21 +84,40 @@ You are refining the current schedule draft. Below are the current active timeta
 ${JSON.stringify(
   existingEntries
     .filter((e) => e.blockId === block.id)
-    .map((e) => ({
-      offeringId: e.offeringId,
-      instructorId: e.instructorId,
-      roomId: e.roomId,
-      dayOfWeek: e.dayOfWeek,
-      startTime: e.startTime,
-      endTime: e.endTime,
-      sessionType: e.sessionType,
-    })),
+    .map((e) => {
+      const off = offerings.find((o) => o.id === e.offeringId);
+      const qualInst = off?.qualifiedInstructors.find((i) => i.id === e.instructorId);
+      const room = off?.eligibleRooms.find((r) => r.id === e.roomId);
+      return {
+        courseCode: off?.subject.code || '',
+        courseTitle: off?.subject.title || '',
+        offeringId: e.offeringId,
+        instructorName: qualInst?.name || '',
+        instructorId: e.instructorId,
+        roomName: room?.name || (off?.subject.facilityType === 'unspecified' ? 'None (N/A)' : ''),
+        roomId: e.roomId,
+        dayOfWeek: e.dayOfWeek,
+        dayName: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][e.dayOfWeek],
+        startTime: e.startTime,
+        endTime: e.endTime,
+        sessionType: e.sessionType,
+      };
+    }),
   null,
   2
 )}
+
 USER DIRECTIVES & MODIFICATIONS TO APPLY:
 "${preferences.customNotes || 'Refine timetable conflict-free.'}"
-Carefully read the current timetable above. Keep existing classes that do not need to change, and modify, move, or reassign only the classes requested by the user's preferences!\n`
+
+${preferences.refineScope === 'whole_block'
+  ? `WHOLE-BLOCK RESHUFFLE MODE:
+- You are allowed to adjust, shift, or reshuffle any classes across the week to satisfy the user's overall directive (e.g. morning/afternoon preference, day pairing, or general balance) while maintaining conflict-free placement.`
+  : `TARGETED ADJUSTMENT MODE (MANDATORY STRICT RULES):
+1. SPECIFIC FOCUS: Only adjust the specific course(s) explicitly mentioned in USER DIRECTIVES (e.g. specific day, day pairing, start time, room, or instructor).
+2. LOCK ALL UNMENTIONED CLASSES: Every other course currently on the timetable that is NOT explicitly mentioned in the USER DIRECTIVES MUST REMAIN STRICTLY LOCKED at its EXACT current day, time, room, and instructor! You must output them exactly as they are currently scheduled.
+3. DO NOT SHIFT OR DISPLACE LOCKED CLASSES: If placing the requested course into the requested slot would cause a time collision with another class on the schedule, or with instructor/room availability, DO NOT move or reschedule the locked class.`
+}\n`
     : ''
 }
 
@@ -92,25 +131,34 @@ Follow these instructions strictly! If the scheduler requests to leave out or ex
 
 AVAILABLE OFFERINGS TO SCHEDULE:
 ${JSON.stringify(
-  offerings.map((o) => ({
-    offeringId: o.id,
-    courseCode: o.subject.code,
-    courseTitle: o.subject.title,
-    lectureHours: o.subject.lectureHours,
-    labHours: o.subject.labHours,
-    requiresLab: o.subject.requiresLab,
-    qualifiedInstructors: o.qualifiedInstructors.map((i) => ({
-      id: i.id,
-      name: i.name,
-      availability: i.availability,
-    })),
-    eligibleRooms: o.eligibleRooms.map((r) => ({
-      id: r.id,
-      name: r.name,
-      type: r.roomType,
-      capacity: r.capacity,
-    })),
-  })),
+  offerings.map((o) => {
+    const totalWeeklyHours =
+      o.subject.lectureHours + o.subject.labHours > 0
+        ? o.subject.lectureHours + o.subject.labHours
+        : o.subject.units || 0;
+    return {
+      offeringId: o.id,
+      courseCode: o.subject.code,
+      courseTitle: o.subject.title,
+      units: o.subject.units,
+      totalWeeklyHours,
+      lectureHours: o.subject.lectureHours,
+      labHours: o.subject.labHours,
+      requiresLab: o.subject.requiresLab,
+      facilityType: o.subject.facilityType,
+      qualifiedInstructors: o.qualifiedInstructors.map((i) => ({
+        id: i.id,
+        name: i.name,
+        availability: i.availability,
+      })),
+      eligibleRooms: o.eligibleRooms.map((r) => ({
+        id: r.id,
+        name: r.name,
+        type: r.roomType,
+        capacity: r.capacity,
+      })),
+    };
+  }),
   null,
   2
 )}
@@ -130,13 +178,15 @@ ${JSON.stringify(
 
 ALREADY OCCUPIED SLOTS IN OTHER BLOCKS:
 ${JSON.stringify(
-  existingEntries.map((e) => ({
-    instructorId: e.instructorId,
-    roomId: e.roomId,
-    dayOfWeek: e.dayOfWeek,
-    startTime: e.startTime,
-    endTime: e.endTime,
-  })),
+  existingEntries
+    .filter((e) => e.blockId !== block.id)
+    .map((e) => ({
+      instructorId: e.instructorId,
+      roomId: e.roomId,
+      dayOfWeek: e.dayOfWeek,
+      startTime: e.startTime,
+      endTime: e.endTime,
+    })),
   null,
   2
 )}
@@ -180,14 +230,49 @@ export function generateHeuristicDraft(
 ): ProposedEntry[] {
   const proposed: ProposedEntry[] = [];
   const days = payload.preferences.allowSaturday ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5];
-  const maxEndMinutes = payload.preferences.noClassesAfter5pm ? 17 * 60 : 19 * 60;
+
+  const isHsBlock =
+    (payload.block.name || '').toLowerCase().includes('high school') ||
+    (payload.block.name || '').toLowerCase().includes('grade') ||
+    (payload.block.name || '').toUpperCase().startsWith('HS');
+
+  const lunchWindow = isHsBlock
+    ? { startTime: '12:00', endTime: '13:00' }
+    : { startTime: '12:30', endTime: '13:00' };
+
+  const minStartMinutes = isHsBlock ? 7 * 60 : 8 * 60;
+  const maxEndMinutes = isHsBlock
+    ? 16 * 60 // 4:00 PM for High School
+    : payload.preferences.noClassesAfter5pm ? 17 * 60 : 19 * 60;
   const isSplitTwoDays = payload.preferences.splitTwoDays !== false;
 
   // Day pairs for 2-day split
   const dayPairs = [[1, 3], [2, 4]]; // MW, TTH
+  const extendedDayPairs = isHsBlock
+    ? [[1, 3], [2, 4]]
+    : [
+        [1, 3],
+        [2, 4],
+        [1, 4],
+        [2, 5],
+        [1, 5],
+        [3, 5],
+        ...(payload.preferences.allowSaturday !== false ? [[5, 6]] : []),
+      ];
 
-  // Canonical 1.5-hour timetable slots for MW / TTH (strictly avoiding 12:30-13:00 lunch break)
-  const split15Slots = payload.preferences.preferMornings
+  // Canonical 1.5-hour timetable slots for MW / TTH (strictly avoiding lunch break)
+  const split15Slots = isHsBlock
+    ? [
+        ['07:30', '09:00'],
+        ['09:00', '10:30'],
+        ['10:30', '12:00'],
+        ['07:00', '08:30'],
+        ['08:30', '10:00'],
+        ['10:00', '11:30'],
+        ['13:00', '14:30'],
+        ['14:30', '16:00'],
+      ]
+    : payload.preferences.preferMornings
     ? [
         ['08:00', '09:30'],
         ['09:30', '11:00'],
@@ -208,7 +293,24 @@ export function generateHeuristicDraft(
       ];
 
   // Canonical timetable grid start times
-  const canonicalStartTimes = payload.preferences.preferMornings
+  const canonicalStartTimes = isHsBlock
+    ? [
+        '07:00',
+        '07:30',
+        '08:00',
+        '08:30',
+        '09:00',
+        '09:30',
+        '10:00',
+        '10:30',
+        '11:00',
+        '13:00',
+        '13:30',
+        '14:00',
+        '14:30',
+        '15:00',
+      ]
+    : payload.preferences.preferMornings
     ? ['08:00', '09:30', '11:00', '13:00', '14:30', '16:00', '17:30', '19:00']
     : ['09:30', '13:00', '11:00', '14:30', '08:00', '16:00', '17:30', '19:00'];
 
@@ -244,7 +346,7 @@ export function generateHeuristicDraft(
 
   // Check if room is busy at day/time (unspecified facility subjects never occupy/block rooms)
   const isRoomOccupied = (roomId: string | null | undefined, day: number, sTime: string, eTime: string): boolean => {
-    if (!roomId) return false;
+    if (!roomId || roomId === '00000000-0000-0000-0000-000000000000') return false;
     if (proposed.some((p) => {
       if (p.roomId !== roomId || p.dayOfWeek !== day) return false;
       const off = payload.offerings.find((o) => o.id === p.offeringId);
@@ -254,9 +356,7 @@ export function generateHeuristicDraft(
       return true;
     }
     if (payload.existingEntries.some((e) => {
-      if (e.roomId !== roomId || e.dayOfWeek !== day) return false;
-      const off = payload.offerings.find((o) => o.subject.id === e.subjectId);
-      if (off?.subject.facilityType === 'unspecified') return false;
+      if (!e.roomId || e.roomId !== roomId || e.dayOfWeek !== day) return false;
       return timeRangesOverlap(sTime, eTime, e.startTime, e.endTime);
     })) {
       return true;
@@ -282,6 +382,7 @@ export function generateHeuristicDraft(
     eTime: string
   ) => {
     const available = qualified.filter((inst) => {
+      if (isInstructorOccupied(inst.id, day, sTime, eTime)) return false;
       if (!inst.availability || inst.availability.length === 0) return true;
       return inst.availability.some(
         (a) => a.dayOfWeek === day && isTimeRangeWithin(sTime, eTime, a.startTime, a.endTime)
@@ -333,8 +434,8 @@ export function generateHeuristicDraft(
     const offering = payload.offerings[offIndex];
     const { subject, qualifiedInstructors, eligibleRooms } = offering;
 
-    // Filter valid rooms by capacity
-    const validRooms = eligibleRooms.filter((r) => r.capacity >= payload.block.studentCount);
+    // All eligible rooms are valid (room capacity constraint removed)
+    const validRooms = eligibleRooms;
     const lectureRooms = validRooms.filter((r) => r.roomType === 'lecture');
     const labRooms = validRooms.filter((r) => r.roomType === 'laboratory');
 
@@ -344,17 +445,40 @@ export function generateHeuristicDraft(
     let lectureDays: number[] = [];
     let assignedInstructorId: string | null = null;
 
-    // 1. Plan Lecture Session (if lectureHours > 0)
-    if (subject.lectureHours > 0) {
-      let placed = false;
+    const subCodeUpper = (subject.code || '').toUpperCase();
+    const subTitleUpper = (subject.title || '').toUpperCase();
+    const isPE =
+      subCodeUpper.includes('PE') ||
+      subCodeUpper.includes('PATHFIT') ||
+      subTitleUpper.includes('PHYSICAL EDUCATION') ||
+      subTitleUpper.includes('PATHFIT');
+    const isNSTP =
+      subCodeUpper.includes('NSTP') ||
+      subCodeUpper.includes('ROTC') ||
+      subCodeUpper.includes('CWTS') ||
+      subTitleUpper.includes('NATIONAL SERVICE') ||
+      subTitleUpper.includes('NSTP');
+    const isPEorNSTP = isPE || isNSTP;
 
-      // 2-Day Split: If 3 lecture hours and splitTwoDays is active, schedule two 1.5-hour sessions on MW or TTH
-      if (isSplitTwoDays && subject.lectureHours === 3) {
-        // Alternate starting pair based on offering index to distribute between MW and TTH
-        const orderedPairs = offIndex % 2 === 0 ? dayPairs : [...dayPairs].reverse();
+    // =========================================================================
+    // DAY PAIRING (MW & TTH) - PRIMARY SCHEDULING MODE
+    // =========================================================================
 
-        for (const [d1, d2] of orderedPairs) {
-          if (placed) break;
+    // CASE 1: Standard 3-Unit Course with Lecture (1.5h) & Lab (1.5h)
+    // Scheduled together across the Day Pair (MW or TTH) at the exact same time slot!
+    // Day 1 (Mon / Tue): Lecture session (1.5h) in Lecture Room
+    // Day 2 (Wed / Thu): Lab session (1.5h) in Computer Lab
+    if (isSplitTwoDays && !isPEorNSTP && subject.lectureHours === 1.5 && subject.labHours === 1.5) {
+      let placedPair = false;
+      const pairRounds = [
+        offIndex % 2 === 0 ? dayPairs : [...dayPairs].reverse(),
+        extendedDayPairs,
+      ];
+
+      for (const roundPairs of pairRounds) {
+        if (placedPair) break;
+        for (const [d1, d2] of roundPairs) {
+          if (placedPair) break;
           for (const [sTime, eTime] of split15Slots) {
             const [eh, em] = eTime.split(':').map(Number);
             if (eh * 60 + em > maxEndMinutes) continue;
@@ -363,17 +487,120 @@ export function generateHeuristicDraft(
             const slotKey2 = `${offering.id}:${d2}:${sTime}-${eTime}`;
             if (excludedSlots.has(slotKey1) || excludedSlots.has(slotKey2)) continue;
 
-            // Must be free on both days for the block
+            // Block must be free at this time slot on both days
+            if (isBlockTimeOccupied(d1, sTime, eTime) || isBlockTimeOccupied(d2, sTime, eTime)) continue;
+
+            // Pick qualified instructor available on both days
+            const instructor = pickBestInstructorForPair(qualifiedInstructors, d1, d2, sTime, eTime);
+            if (!instructor) continue;
+
+            // Room for Day 1 (Lecture) - prefer lecture rooms, overflow to lab rooms or any valid room if all booked
+            const isLecUnspecified = subject.facilityType === 'unspecified';
+            let lecRoom = isLecUnspecified
+              ? null
+              : preferredLectureRooms.find(
+                  (r) =>
+                    !isRoomOccupied(r.id, d1, sTime, eTime) &&
+                    !hasFixedConstraintCollision(r.id, d1, sTime, eTime)
+                );
+            if (!isLecUnspecified && !lecRoom) {
+              lecRoom = preferredLabRooms.find(
+                (r) =>
+                  !isRoomOccupied(r.id, d1, sTime, eTime) &&
+                  !hasFixedConstraintCollision(r.id, d1, sTime, eTime)
+              ) || validRooms.find(
+                (r) =>
+                  !isRoomOccupied(r.id, d1, sTime, eTime) &&
+                  !hasFixedConstraintCollision(r.id, d1, sTime, eTime)
+              );
+            }
+            if (!isLecUnspecified && !lecRoom) continue;
+
+            // Room for Day 2 (Computer Lab) - overflow to validRooms if needed
+            let labRoom = preferredLabRooms.find(
+              (r) =>
+                !isRoomOccupied(r.id, d2, sTime, eTime) &&
+                !hasFixedConstraintCollision(r.id, d2, sTime, eTime)
+            ) || validRooms.find(
+              (r) =>
+                !isRoomOccupied(r.id, d2, sTime, eTime) &&
+                !hasFixedConstraintCollision(r.id, d2, sTime, eTime)
+            );
+            if (!labRoom) continue;
+
+            // Place Day 1 Lecture
+            proposed.push({
+              offeringId: offering.id,
+              instructorId: instructor.id,
+              roomId: isLecUnspecified ? '00000000-0000-0000-0000-000000000000' : (lecRoom ? lecRoom.id : '00000000-0000-0000-0000-000000000000'),
+              dayOfWeek: d1,
+              startTime: sTime,
+              endTime: eTime,
+              sessionType: 'lecture',
+            });
+
+            // Place Day 2 Lab
+            proposed.push({
+              offeringId: offering.id,
+              instructorId: instructor.id,
+              roomId: labRoom.id,
+              dayOfWeek: d2,
+              startTime: sTime,
+              endTime: eTime,
+              sessionType: 'lab',
+            });
+
+            const durMin = 90;
+            instructorAssignedMinutes.set(instructor.id, (instructorAssignedMinutes.get(instructor.id) || 0) + durMin * 2);
+            for (const d of [d1, d2]) {
+              if (!instructorDailyMinutes.has(instructor.id)) instructorDailyMinutes.set(instructor.id, new Map());
+              const dMap = instructorDailyMinutes.get(instructor.id)!;
+              dMap.set(d, (dMap.get(d) || 0) + durMin);
+            }
+
+            placedPair = true;
+            break;
+          }
+        }
+      }
+
+      if (placedPair) {
+        continue; // Successfully scheduled on day pair!
+      }
+    }
+
+    // CASE 2: Pure 3-Hour Lecture Course (3.0h lecture, 0h lab)
+    // Scheduled as two 1.5-hour lecture sessions on Day Pair (MW or TTH) at the same time slot!
+    if (isSplitTwoDays && !isPEorNSTP && subject.lectureHours === 3 && subject.labHours === 0) {
+      let placedPair = false;
+      const pairRounds = [
+        offIndex % 2 === 0 ? dayPairs : [...dayPairs].reverse(),
+        extendedDayPairs,
+      ];
+
+      for (const roundPairs of pairRounds) {
+        if (placedPair) break;
+        for (const [d1, d2] of roundPairs) {
+          if (placedPair) break;
+          for (const [sTime, eTime] of split15Slots) {
+            const [eh, em] = eTime.split(':').map(Number);
+            if (eh * 60 + em > maxEndMinutes) continue;
+
+            const slotKey1 = `${offering.id}:${d1}:${sTime}-${eTime}`;
+            const slotKey2 = `${offering.id}:${d2}:${sTime}-${eTime}`;
+            if (excludedSlots.has(slotKey1) || excludedSlots.has(slotKey2)) continue;
+
+            // Block must be free on both days
             if (isBlockTimeOccupied(d1, sTime, eTime) || isBlockTimeOccupied(d2, sTime, eTime)) continue;
 
             // Pick instructor available on both days
             const instructor = pickBestInstructorForPair(qualifiedInstructors, d1, d2, sTime, eTime);
             if (!instructor) continue;
 
-            // Find a room available and free of constraints on both days (unspecified facility does not need a specific room)
+            // Find a lecture room available on both days - prefer lecture rooms, overflow to lab rooms or any room
             const isUnspecified = subject.facilityType === 'unspecified';
-            const roomToUse = isUnspecified
-              ? (preferredLectureRooms[0] || eligibleRooms[0] || null)
+            let roomToUse = isUnspecified
+              ? null
               : preferredLectureRooms.find(
                   (r) =>
                     !isRoomOccupied(r.id, d1, sTime, eTime) &&
@@ -381,13 +608,28 @@ export function generateHeuristicDraft(
                     !hasFixedConstraintCollision(r.id, d1, sTime, eTime) &&
                     !hasFixedConstraintCollision(r.id, d2, sTime, eTime)
                 );
+            if (!isUnspecified && !roomToUse) {
+              roomToUse = preferredLabRooms.find(
+                (r) =>
+                  !isRoomOccupied(r.id, d1, sTime, eTime) &&
+                  !isRoomOccupied(r.id, d2, sTime, eTime) &&
+                  !hasFixedConstraintCollision(r.id, d1, sTime, eTime) &&
+                  !hasFixedConstraintCollision(r.id, d2, sTime, eTime)
+              ) || validRooms.find(
+                (r) =>
+                  !isRoomOccupied(r.id, d1, sTime, eTime) &&
+                  !isRoomOccupied(r.id, d2, sTime, eTime) &&
+                  !hasFixedConstraintCollision(r.id, d1, sTime, eTime) &&
+                  !hasFixedConstraintCollision(r.id, d2, sTime, eTime)
+              );
+            }
             if (!isUnspecified && !roomToUse) continue;
 
             // Place on both days (90m each = 180m = 3h total)
             proposed.push({
               offeringId: offering.id,
               instructorId: instructor.id,
-              roomId: roomToUse ? roomToUse.id : null,
+              roomId: isUnspecified ? '00000000-0000-0000-0000-000000000000' : (roomToUse ? roomToUse.id : '00000000-0000-0000-0000-000000000000'),
               dayOfWeek: d1,
               startTime: sTime,
               endTime: eTime,
@@ -396,7 +638,7 @@ export function generateHeuristicDraft(
             proposed.push({
               offeringId: offering.id,
               instructorId: instructor.id,
-              roomId: roomToUse ? roomToUse.id : null,
+              roomId: isUnspecified ? '00000000-0000-0000-0000-000000000000' : (roomToUse ? roomToUse.id : '00000000-0000-0000-0000-000000000000'),
               dayOfWeek: d2,
               startTime: sTime,
               endTime: eTime,
@@ -411,71 +653,90 @@ export function generateHeuristicDraft(
               dMap.set(d, (dMap.get(d) || 0) + durMin);
             }
 
-            lectureDays = [d1, d2];
-            assignedInstructorId = instructor.id;
-            placed = true;
+            placedPair = true;
             break;
           }
         }
       }
 
-      // Single-Day fallback (e.g. 2-hour PE 3, or if 2-day split was not applicable or full)
-      if (!placed) {
-        const durationHours = subject.lectureHours;
-        // For 2-hour courses (like PE 3), prefer Friday (5) or Saturday (6) first
-        const candidateDays = durationHours === 2
-          ? [5, ...(payload.preferences.allowSaturday ? [6] : []), ...days.filter((d) => d !== 5 && d !== 6)]
-          : [...days.slice(offIndex % days.length), ...days.slice(0, offIndex % days.length)];
+      if (placedPair) {
+        continue; // Successfully scheduled on day pair!
+      }
+    }
 
-        for (const day of candidateDays) {
-          if (placed) break;
-          for (const sTime of canonicalStartTimes) {
-            const sMin = timeToMinutes(sTime);
-            const eMin = sMin + durationHours * 60;
-            if (eMin > maxEndMinutes) continue;
+    // =========================================================================
+    // FALLBACK / SINGLE-SESSION SCHEDULING
+    // (For 2-hour PE, 1-hour courses, or if paired placement was full)
+    // =========================================================================
 
-            const eTime = `${String(Math.floor(eMin / 60)).padStart(2, '0')}:${String(eMin % 60).padStart(2, '0')}`;
+    // 1. Plan Lecture Session (if lectureHours > 0 and not yet placed)
+    if (subject.lectureHours > 0) {
+      let placed = false;
+      const durationHours = subject.lectureHours;
+      // For PE and NSTP: prioritize Saturday (6) first, then Friday (5), then other weekdays (Monday–Thursday)
+      const regularDays = [...days.slice(offIndex % days.length), ...days.slice(0, offIndex % days.length)];
+      const candidateDays = isPEorNSTP
+        ? [6, 5, ...days.filter((d) => d !== 6 && d !== 5)]
+        : durationHours === 2
+        ? [5, 6, ...days.filter((d) => d !== 5 && d !== 6)]
+        : [...regularDays, 5, 6];
+      const uniqueCandidateDays = Array.from(new Set(candidateDays));
 
-            // Must NOT cross or span 12:30-13:00 lunch break!
-            if (timeRangesOverlap(sTime, eTime, '12:30', '13:00')) continue;
+      for (const day of uniqueCandidateDays) {
+        if (placed) break;
+        for (const sTime of canonicalStartTimes) {
+          const sMin = timeToMinutes(sTime);
+          const eMin = sMin + durationHours * 60;
+          if (eMin > maxEndMinutes) continue;
 
-            const slotKey = `${offering.id}:${day}:${sTime}-${eTime}`;
-            if (excludedSlots.has(slotKey)) continue;
+          const eTime = `${String(Math.floor(eMin / 60)).padStart(2, '0')}:${String(eMin % 60).padStart(2, '0')}`;
 
-            if (isBlockTimeOccupied(day, sTime, eTime)) continue;
+          // Must NOT cross or span lunch break (12:00-13:00 for HS, 12:30-13:00 for College)!
+          if (timeRangesOverlap(sTime, eTime, lunchWindow.startTime, lunchWindow.endTime)) continue;
 
-            const instructor = pickBestInstructor(qualifiedInstructors, day, sTime, eTime);
-            if (!instructor || isInstructorOccupied(instructor.id, day, sTime, eTime)) continue;
+          const slotKey = `${offering.id}:${day}:${sTime}-${eTime}`;
+          if (excludedSlots.has(slotKey)) continue;
 
-            const isUnspecified = subject.facilityType === 'unspecified';
-            const roomToUse = isUnspecified
-              ? (preferredLectureRooms[0] || eligibleRooms[0] || null)
-              : preferredLectureRooms.find(
-                  (r) => !isRoomOccupied(r.id, day, sTime, eTime) && !hasFixedConstraintCollision(r.id, day, sTime, eTime)
-                );
-            if (!isUnspecified && !roomToUse) continue;
+          if (isBlockTimeOccupied(day, sTime, eTime)) continue;
 
-            proposed.push({
-              offeringId: offering.id,
-              instructorId: instructor.id,
-              roomId: roomToUse ? roomToUse.id : null,
-              dayOfWeek: day,
-              startTime: sTime,
-              endTime: eTime,
-              sessionType: 'lecture',
-            });
+          const instructor = pickBestInstructor(qualifiedInstructors, day, sTime, eTime);
+          if (!instructor || isInstructorOccupied(instructor.id, day, sTime, eTime)) continue;
 
-            const durMin = durationHours * 60;
-            instructorAssignedMinutes.set(instructor.id, (instructorAssignedMinutes.get(instructor.id) || 0) + durMin);
-            if (!instructorDailyMinutes.has(instructor.id)) instructorDailyMinutes.set(instructor.id, new Map());
-            const dMap = instructorDailyMinutes.get(instructor.id)!;
-            dMap.set(day, (dMap.get(day) || 0) + durMin);
-
-            lectureDays = [day];
-            assignedInstructorId = instructor.id;
-            placed = true;
-            break;
+          const isUnspecified = subject.facilityType === 'unspecified';
+          let roomToUse = isUnspecified
+            ? null
+            : preferredLectureRooms.find(
+                (r) => !isRoomOccupied(r.id, day, sTime, eTime) && !hasFixedConstraintCollision(r.id, day, sTime, eTime)
+              );
+          if (!isUnspecified && !roomToUse) {
+            roomToUse = preferredLabRooms.find(
+              (r) => !isRoomOccupied(r.id, day, sTime, eTime) && !hasFixedConstraintCollision(r.id, day, sTime, eTime)
+            ) || validRooms.find(
+              (r) => !isRoomOccupied(r.id, day, sTime, eTime) && !hasFixedConstraintCollision(r.id, day, sTime, eTime)
+            );
           }
+          if (!isUnspecified && !roomToUse) continue;
+
+          proposed.push({
+            offeringId: offering.id,
+            instructorId: instructor.id,
+            roomId: isUnspecified ? '00000000-0000-0000-0000-000000000000' : (roomToUse ? roomToUse.id : '00000000-0000-0000-0000-000000000000'),
+            dayOfWeek: day,
+            startTime: sTime,
+            endTime: eTime,
+            sessionType: 'lecture',
+          });
+
+          const durMin = durationHours * 60;
+          instructorAssignedMinutes.set(instructor.id, (instructorAssignedMinutes.get(instructor.id) || 0) + durMin);
+          if (!instructorDailyMinutes.has(instructor.id)) instructorDailyMinutes.set(instructor.id, new Map());
+          const dMap = instructorDailyMinutes.get(instructor.id)!;
+          dMap.set(day, (dMap.get(day) || 0) + durMin);
+
+          lectureDays = [day];
+          assignedInstructorId = instructor.id;
+          placed = true;
+          break;
         }
       }
     }
@@ -487,15 +748,18 @@ export function generateHeuristicDraft(
       const durationHours = subject.labHours;
       let placed = false;
 
-      // Prefer Friday (5) or Saturday (6) first, or a day separate from lecture days
-      const labCandidateDays = [
-        5,
-        ...(payload.preferences.allowSaturday ? [6] : []),
-        ...days.filter((d) => d !== 5 && d !== 6 && !lectureDays.includes(d)),
-        ...days.filter((d) => lectureDays.includes(d)),
-      ];
+      // For PE & NSTP lab/activity courses, prioritize Saturday (6) first, then Friday (5)
+      const labCandidateDays = isPEorNSTP
+        ? [6, 5, ...days.filter((d) => d !== 6 && d !== 5)]
+        : [
+            5,
+            6,
+            ...days.filter((d) => d !== 5 && d !== 6 && !lectureDays.includes(d)),
+            ...days.filter((d) => lectureDays.includes(d)),
+          ];
+      const uniqueLabCandidateDays = Array.from(new Set(labCandidateDays));
 
-      for (const day of labCandidateDays) {
+      for (const day of uniqueLabCandidateDays) {
         if (placed) break;
         for (const sTime of canonicalStartTimes) {
           if (placed) break;
@@ -505,8 +769,8 @@ export function generateHeuristicDraft(
 
           const eTime = `${String(Math.floor(eMin / 60)).padStart(2, '0')}:${String(eMin % 60).padStart(2, '0')}`;
 
-          // Must NOT cross or span 12:30-13:00 lunch break!
-          if (timeRangesOverlap(sTime, eTime, '12:30', '13:00')) continue;
+          // Must NOT cross or span lunch break (12:00-13:00 for HS, 12:30-13:00 for College)!
+          if (timeRangesOverlap(sTime, eTime, lunchWindow.startTime, lunchWindow.endTime)) continue;
 
           const slotKey = `${offering.id}:${day}:${sTime}-${eTime}`;
           if (excludedSlots.has(slotKey)) continue;
@@ -528,7 +792,9 @@ export function generateHeuristicDraft(
 
           if (!instructor || isInstructorOccupied(instructor.id, day, sTime, eTime)) continue;
 
-          const roomToUse = preferredLabRooms.find(
+          let roomToUse = preferredLabRooms.find(
+            (r) => !isRoomOccupied(r.id, day, sTime, eTime) && !hasFixedConstraintCollision(r.id, day, sTime, eTime)
+          ) || validRooms.find(
             (r) => !isRoomOccupied(r.id, day, sTime, eTime) && !hasFixedConstraintCollision(r.id, day, sTime, eTime)
           );
           if (!roomToUse) continue;
@@ -687,34 +953,89 @@ export async function generateDraftWithGemini(
       };
     }
 
-    // Continuous Guard: Verify that subjects with 1 or 2 hours were never split or truncated to 1.5h
+    // Continuous Guard: Verify that subjects never exceed or fall short of required curriculum hours
     let needsHeuristicRepair = false;
-    for (const off of payload.offerings) {
-      if (off.subject.lectureHours > 0 && off.subject.lectureHours <= 2) {
-        const offLecEntries = validation.data.filter(
-          (p) => p.offeringId === off.id && p.sessionType === 'lecture'
-        );
-        const reqMins = off.subject.lectureHours * 60;
-        const hasSplit = offLecEntries.length > 1;
-        const isUnderDuration = offLecEntries.some((e) => {
-          const [sh, sm] = e.startTime.split(':').map(Number);
-          const [eh, em] = e.endTime.split(':').map(Number);
-          return (eh * 60 + em) - (sh * 60 + sm) < reqMins;
-        });
 
-        if (hasSplit || isUnderDuration) {
-          needsHeuristicRepair = true;
-          break;
+    // Enforce canonical start times for college blocks
+    const isHsBlock =
+      (payload.block.name || '').toLowerCase().includes('grade') ||
+      (payload.block.name || '').toLowerCase().includes('high school') ||
+      (payload.block.name || '').toUpperCase().startsWith('HS') ||
+      payload.offerings.some(
+        (o) =>
+          (o.subject.code || '').startsWith('HS') ||
+          (o.subject.code || '').startsWith('JHS') ||
+          (o.subject.code || '').startsWith('SHS')
+      );
+
+    if (!isHsBlock) {
+      const COLLEGE_CANONICAL_STARTS = new Set([
+        '08:00',
+        '09:30',
+        '11:00',
+        '13:00',
+        '14:30',
+        '16:00',
+        '17:30',
+        '19:00',
+      ]);
+
+      for (const p of validation.data) {
+        const s = p.startTime.slice(0, 5);
+        if (!COLLEGE_CANONICAL_STARTS.has(s)) {
+          if (s === '14:00' || s === '15:00') {
+            const dur = timeToMinutes(p.endTime) - timeToMinutes(s);
+            p.startTime = '14:30';
+            const endMin = timeToMinutes('14:30') + dur;
+            p.endTime = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+          } else if (s === '10:00') {
+            const dur = timeToMinutes(p.endTime) - timeToMinutes(s);
+            p.startTime = '09:30';
+            const endMin = timeToMinutes('09:30') + dur;
+            p.endTime = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}`;
+          }
+          if (!COLLEGE_CANONICAL_STARTS.has(p.startTime.slice(0, 5))) {
+            needsHeuristicRepair = true;
+            break;
+          }
         }
+      }
+    }
+
+    for (const off of payload.offerings) {
+      const requiredHours =
+        off.subject.lectureHours + off.subject.labHours > 0
+          ? off.subject.lectureHours + off.subject.labHours
+          : (off.subject.units || 0);
+      const reqMins = requiredHours * 60;
+
+      const offEntries = validation.data.filter((p) => p.offeringId === off.id);
+      let totalAssignedMins = 0;
+      for (const e of offEntries) {
+        const [sh, sm] = e.startTime.split(':').map(Number);
+        const [eh, em] = e.endTime.split(':').map(Number);
+        totalAssignedMins += (eh * 60 + em) - (sh * 60 + sm);
+      }
+
+      // Check for over-scheduling or under-scheduling
+      if (totalAssignedMins !== reqMins) {
+        needsHeuristicRepair = true;
+        break;
+      }
+
+      // If single-session 1h or 2h subject, ensure it was not split across multiple sessions
+      if (requiredHours <= 2 && offEntries.length > 1) {
+        needsHeuristicRepair = true;
+        break;
       }
 
       // Check qualification: must only assign qualified instructors
       if (!needsHeuristicRepair) {
         const hasUnqualified = validation.data.some((p) => {
           if (!p.instructorId) return false;
-          const off = payload.offerings.find((o) => o.id === p.offeringId);
-          if (!off) return false;
-          return !off.qualifiedInstructors.some((qi) => qi.id === p.instructorId);
+          const targetOff = payload.offerings.find((o) => o.id === p.offeringId);
+          if (!targetOff) return false;
+          return !targetOff.qualifiedInstructors.some((qi) => qi.id === p.instructorId);
         });
         if (hasUnqualified) {
           needsHeuristicRepair = true;
@@ -725,7 +1046,7 @@ export async function generateDraftWithGemini(
 
     if (needsHeuristicRepair) {
       console.warn(
-        '[Gemini Flash] LLM improperly split 1h/2h subject or picked unqualified instructor. Running deterministic solver to guarantee compliant schedule.'
+        '[Gemini Flash] LLM improperly scheduled hours (over/under units) or picked unqualified instructor. Running deterministic solver to guarantee compliant schedule.'
       );
       const heuristicResults = generateHeuristicDraft(payload, getExcludedSlots());
       return {

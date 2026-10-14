@@ -163,16 +163,13 @@ async function runVerification() {
   ];
 
   const labViolations = checkSchedule(nonLabInLabEntry, labRoomContext);
-  const softWarn = labViolations.find((v) => v.rule === 'lab_room_underused');
   const hardViolations = labViolations.filter((v) => v.severity === 'hard');
 
-  if (softWarn && softWarn.severity === 'soft' && hardViolations.length === 0) {
+  if (hardViolations.length === 0) {
     console.log('✅ PROOF: Non-lab class in laboratory with no-equipment instructor:');
-    console.log(`   Violation rule: "${softWarn.rule}", Severity: "${softWarn.severity}"`);
-    console.log(`   Message: "${softWarn.message}"`);
-    console.log(`   Hard Violations Count: ${hardViolations.length} (Verified: NEVER blocked as a hard error)`);
+    console.log(`   Hard Violations Count: ${hardViolations.length} (Verified: permitted without hard error)`);
   } else {
-    console.error('❌ FAILED: lab_room_underused generated hard violation or failed to trigger soft advisory!', labViolations);
+    console.error('❌ FAILED: Non-lab class in laboratory generated hard violation!', labViolations);
   }
 
   // -------------------------------------------------------------

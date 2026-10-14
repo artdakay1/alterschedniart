@@ -23,8 +23,10 @@ import type {
   ClassOffering,
   FixedConstraint,
   ScheduleEntry,
+  DepartmentType,
 } from '@/types/database';
 import { ensureOfferingsForBlock, getCurriculumMetadataMap } from '@/lib/academic/curriculum-connector';
+import { getRoomAllowedDepartments } from '@/lib/academic/room-departments';
 
 async function assertSchedulerOrAdminCaller() {
   const supabase = await createClient();
@@ -36,7 +38,7 @@ async function assertSchedulerOrAdminCaller() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role, status')
+    .select('role, status, department, allowed_subjects')
     .eq('id', user.id)
     .single();
 
@@ -50,17 +52,25 @@ async function assertSchedulerOrAdminCaller() {
     );
   }
 
-  return { supabase, user };
+  return { supabase, user, profile };
+}
+
+export interface SchedulingFilters {
+  yearLevels?: (string | number)[];
+  instructorIds?: string[];
+  subjectIds?: string[];
+  blockIds?: string[];
 }
 
 /**
- * Server action to generate an AI draft schedule for selected blocks.
+ * Server action to generate an AI draft schedule for selected blocks with customizable filters.
  */
 export async function generateAiDraftAction(
   termId: string,
   blockIds: string[],
   preferences: SchedulerPreferences,
-  mode: 'new' | 'refine' = 'new'
+  mode: 'new' | 'refine' = 'new',
+  filters?: SchedulingFilters
 ): Promise<{
   success: boolean;
   versionId: string;
@@ -71,8 +81,9 @@ export async function generateAiDraftAction(
     subjectCode: string;
     reason: string;
   }[];
+  collisionError?: string;
 }> {
-  const { supabase, user } = await assertSchedulerOrAdminCaller();
+  const { supabase, user, profile: callerProfile } = await assertSchedulerOrAdminCaller();
 
   // 1. Check rate limit
   const rateLimit = await checkRateLimit(supabase, user.id);
@@ -82,7 +93,12 @@ export async function generateAiDraftAction(
     );
   }
 
-  if (!blockIds || blockIds.length === 0) {
+  let targetBlockIds = blockIds;
+  if (filters?.blockIds && filters.blockIds.length > 0) {
+    targetBlockIds = targetBlockIds.filter((id) => filters.blockIds!.includes(id));
+  }
+
+  if (!targetBlockIds || targetBlockIds.length === 0) {
     throw new Error('Please select at least one student block.');
   }
 
@@ -99,29 +115,103 @@ export async function generateAiDraftAction(
     constraintsRes,
     existingEntriesRes,
   ] = await Promise.all([
-    supabase.from('blocks').select('*, programs(*)').in('id', blockIds),
+    supabase.from('blocks').select('*, programs(*)').in('id', targetBlockIds),
     supabase
       .from('class_offerings')
       .select('*, subjects(*)')
       .eq('term_id', termId)
-      .in('block_id', blockIds),
-    supabase.from('rooms').select('*').order('capacity', { ascending: false }),
+      .in('block_id', targetBlockIds),
+    supabase.from('rooms').select('*').order('name', { ascending: true }),
     supabase
       .from('instructors')
-      .select('*, instructor_qualifications(*), instructor_availability(*)')
+      .select('*, profiles(department), instructor_qualifications(*), instructor_availability(*)')
       .order('full_name', { ascending: true }),
     supabase.from('subjects').select('*'),
     supabase.from('fixed_constraints').select('*').eq('term_id', termId),
     supabase.from('schedule_entries').select('*').eq('version_id', draftVersion.id),
   ]);
 
-  const blocks = (blocksRes.data || []) as (Block & { programs?: { code: string; name: string } | null })[];
+  let blocks = (blocksRes.data || []) as (Block & { programs?: { code: string; name: string } | null })[];
+
+  // Enforce departmental scope for schedulers
+  if (callerProfile.role !== 'admin') {
+    const dept = ((user.user_metadata?.department as any) || callerProfile.department || 'BSIT') as DepartmentType;
+    blocks = blocks.filter((b) => {
+      const isHs =
+        b.programs?.code === 'HS' ||
+        b.year_level >= 7 ||
+        (b.section || '').toLowerCase().startsWith('grade') ||
+        (b.programs?.name || '').toLowerCase().includes('high school');
+      return dept === 'High School' ? isHs : !isHs;
+    });
+  }
+
+  if (filters?.yearLevels && filters.yearLevels.length > 0) {
+    blocks = blocks.filter((b) => {
+      const isHs =
+        b.programs?.code === 'HS' ||
+        b.year_level >= 7 ||
+        (b.section || '').toLowerCase().startsWith('grade');
+      return filters.yearLevels!.some((yl) => {
+        const ylStr = String(yl).toLowerCase();
+        if (ylStr === 'hs' || ylStr === 'high school') return isHs;
+        return String(b.year_level) === String(yl);
+      });
+    });
+  }
+
+  if (blocks.length === 0) {
+    throw new Error('No student blocks match the selected year level / block filters.');
+  }
+
   const rooms = (roomsRes.data || []) as Room[];
-  const instructors = (instructorsRes.data || []) as (Instructor & {
+  let instructors = (instructorsRes.data || []) as (Instructor & {
+    profiles?: { department?: string | null } | null;
     instructor_qualifications?: { subject_id: string }[];
     instructor_availability?: { day_of_week: number; start_time: string; end_time: string }[];
   })[];
-  const subjects = (subjectsRes.data || []) as Subject[];
+
+  if (callerProfile.role !== 'admin') {
+    const dept = ((user.user_metadata?.department as any) || callerProfile.department || 'BSIT') as DepartmentType;
+    instructors = instructors.filter((inst) => {
+      const instDept = inst.department || inst.profiles?.department;
+      if (!instDept || instDept === 'Both') return true;
+      return instDept === dept;
+    });
+  }
+
+  if (filters?.instructorIds && filters.instructorIds.length > 0) {
+    instructors = instructors.filter((i) => filters.instructorIds!.includes(i.id));
+  }
+
+function isHighSchoolSubject(sub: { code?: string; title?: string }): boolean {
+  const code = (sub.code || '').toUpperCase();
+  const title = (sub.title || '').toLowerCase();
+  return (
+    code.startsWith('HS') ||
+    code.startsWith('JHS') ||
+    code.startsWith('SHS') ||
+    code.startsWith('GRADE') ||
+    title.includes('high school') ||
+    title.includes('grade ')
+  );
+}
+
+  let subjects = (subjectsRes.data || []) as Subject[];
+  if (callerProfile.role !== 'admin') {
+    const dept = ((user.user_metadata?.department as any) || callerProfile.department || 'BSIT') as DepartmentType;
+    const allowedSubjectIds =
+      (user.user_metadata?.allowed_subject_ids as string[]) || callerProfile.allowed_subjects || null;
+    subjects = subjects.filter((sub) => {
+      const isHs = isHighSchoolSubject(sub);
+      const matchesDept = dept === 'High School' ? isHs : !isHs;
+      if (!matchesDept) return false;
+      if (allowedSubjectIds && allowedSubjectIds.length > 0) {
+        return allowedSubjectIds.includes(sub.id);
+      }
+      return true;
+    });
+  }
   const fixedConstraints = (constraintsRes.data || []) as FixedConstraint[];
   let offerings = (offeringsRes.data || []) as (ClassOffering & { subjects?: Subject | null })[];
 
@@ -150,6 +240,7 @@ export async function generateAiDraftAction(
         id: s.id,
         code: s.code,
         title: s.title,
+        units: s.units,
         requiresLab: s.requires_lab,
         facilityType: meta?.facility || (s.requires_lab ? 'lab' : 'lecture'),
         lectureHours: s.lecture_hours,
@@ -272,7 +363,54 @@ export async function generateAiDraftAction(
       }
     }
 
-    if (activeBlockOfferings.length === 0) continue;
+    // Scope Filter for Department Schedulers: only schedule subjects within assigned scope
+    if (callerProfile?.role === 'scheduler') {
+      const userDept = (user.user_metadata?.department as any) || callerProfile.department || 'BSIT';
+      const allowedIds =
+        (user.user_metadata?.allowed_subject_ids as string[]) || callerProfile.allowed_subjects || null;
+
+      activeBlockOfferings = activeBlockOfferings.filter((off) => {
+        if (allowedIds && Array.isArray(allowedIds) && allowedIds.length > 0) {
+          return allowedIds.includes(off.subject_id);
+        }
+        const sub = subjects.find((s) => s.id === off.subject_id);
+        if (!sub) return false;
+        const isHs = isHighSchoolSubject(sub);
+        if (userDept === 'High School') {
+          return isHs;
+        }
+        if (userDept === 'BSIT') {
+          return !isHs;
+        }
+        return true;
+      });
+    }
+
+    // Explicit Subject Filter: only schedule subjects specifically chosen in filters
+    if (filters?.subjectIds && filters.subjectIds.length > 0) {
+      activeBlockOfferings = activeBlockOfferings.filter((off) =>
+        filters.subjectIds!.includes(off.subject_id)
+      );
+    }
+
+    // Safe guard: only keep offerings whose subject actually exists in `subjects`
+    const validBlockOfferings = activeBlockOfferings.filter((off) =>
+      subjects.some((s) => s.id === off.subject_id)
+    );
+
+    if (validBlockOfferings.length === 0) continue;
+
+    const isHsBlock =
+      block.programs?.code === 'HS' ||
+      (block.section || '').toLowerCase().startsWith('grade') ||
+      block.year_level >= 7;
+    const blockDept: DepartmentType = isHsBlock ? 'High School' : 'BSIT';
+
+    // Scoped rooms permitted for this block's department
+    const departmentEligibleRooms = rooms.filter((r) => {
+      const allowedDepts = getRoomAllowedDepartments(r as any);
+      return allowedDepts.includes(blockDept);
+    });
 
     const blockPayload: BlockDraftPayload = {
       termId,
@@ -281,23 +419,47 @@ export async function generateAiDraftAction(
         name: blockLabel,
         studentCount: block.student_count,
       },
-      offerings: activeBlockOfferings.map((off) => {
+      offerings: validBlockOfferings.map((off) => {
         const sub = subjects.find((s) => s.id === off.subject_id)!;
         const qualifiedInsts = instructors.filter((inst) =>
           (inst.instructor_qualifications || []).some((q) => q.subject_id === sub.id)
         );
 
         const subMeta = metaMap[sub.id] || metaMap[sub.code.toUpperCase()] || metaMap[sub.code];
+
+        // Read subject units, lecture hours, and lab hours before generating
+        const units = typeof sub.units === 'number' && !isNaN(sub.units) ? sub.units : 0;
+        let lecHours = typeof sub.lecture_hours === 'number' && !isNaN(sub.lecture_hours) ? sub.lecture_hours : 0;
+        let labHours = typeof sub.lab_hours === 'number' && !isNaN(sub.lab_hours) ? sub.lab_hours : 0;
+
+        // Fallback: derive hours from units if hours are unconfigured (0h)
+        if (lecHours + labHours === 0 && units > 0) {
+          if (sub.requires_lab) {
+            lecHours = Math.max(1, units - 1);
+            labHours = Math.min(3, units);
+          } else {
+            lecHours = units;
+            labHours = 0;
+          }
+        }
+
+        // Avoid adding more hours to a subject than what is in its units/curriculum specification
+        if (units === 1) {
+          lecHours = 1;
+          labHours = 0;
+        }
+
         return {
           id: off.id,
           subject: {
             id: sub.id,
             code: sub.code,
             title: sub.title,
+            units: units,
             requiresLab: sub.requires_lab,
             facilityType: subMeta?.facility || (sub.requires_lab ? 'lab' : 'lecture'),
-            lectureHours: sub.lecture_hours,
-            labHours: sub.lab_hours,
+            lectureHours: lecHours,
+            labHours: labHours,
           },
           qualifiedInstructors: qualifiedInsts.map((i) => ({
             id: i.id,
@@ -308,7 +470,7 @@ export async function generateAiDraftAction(
               endTime: a.end_time,
             })),
           })),
-          eligibleRooms: rooms.map((r) => ({
+          eligibleRooms: departmentEligibleRooms.map((r) => ({
             id: r.id,
             name: r.name,
             roomType: r.room_type,
@@ -371,11 +533,14 @@ export async function generateAiDraftAction(
   revalidatePath('/scheduler/schedule');
   revalidatePath('/scheduler/generate');
 
+  const collisionError = mode === 'refine' ? results.find((r) => !r.success && r.error)?.error : undefined;
+
   return {
-    success: true,
+    success: !collisionError,
     versionId: draftVersion.id,
     results,
     firstBlockId: blockIds[0] || '',
     unassignedWarnings,
+    collisionError,
   };
 }

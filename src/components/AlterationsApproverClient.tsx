@@ -578,8 +578,6 @@ export function AlterationsApproverClient({
               {historyRequests.map((req) => {
                 const entry = req.schedule_entries;
                 const sub = entry?.class_offerings?.subjects;
-                const blk = entry?.class_offerings?.blocks;
-                const proposed = (req.proposed_changes || {}) as ProposedChanges;
 
                 return (
                   <div
@@ -621,7 +619,7 @@ export function AlterationsApproverClient({
                         <span className="fw-bold text-danger d-block mb-1">Rejection Reason Provided:</span>
                         <p className="text-danger mb-0">
                           {req.rejection_reason ||
-                            (req.proposed_changes as any)?.rejection_reason ||
+                            ((req.proposed_changes as Record<string, unknown>)?.rejection_reason as string) ||
                             'No reason specified.'}
                         </p>
                       </div>

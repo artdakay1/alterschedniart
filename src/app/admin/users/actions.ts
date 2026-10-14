@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import type { UserRole, UserStatus } from '@/types/database';
+import { ensureInstructorRecordForProfile } from '@/lib/academic/sync-instructors';
 
 /**
  * Helper to verify that the calling user is authenticated and has an active admin role.
@@ -59,6 +60,15 @@ export async function approveUserAction(userId: string) {
     throw new Error(`Failed to approve user: ${updateErr.message}`);
   }
 
+  // Auto-sync instructor record if user has instructor role
+  if (beforeUser.role === 'instructor') {
+    try {
+      await ensureInstructorRecordForProfile(beforeUser);
+    } catch (e) {
+      console.error('Failed to provision instructor record for approved user:', e);
+    }
+  }
+
   // 3. Write to audit_log
   await supabase.from('audit_log').insert({
     actor_id: adminUser.id,
@@ -70,6 +80,7 @@ export async function approveUserAction(userId: string) {
   });
 
   revalidatePath('/admin/users');
+  revalidatePath('/admin/instructors');
 }
 
 /**
@@ -140,6 +151,14 @@ export async function updateUserRoleAction(userId: string, newRole: UserRole) {
     throw new Error(`Failed to update role: ${updateErr.message}`);
   }
 
+  if (newRole === 'instructor') {
+    try {
+      await ensureInstructorRecordForProfile(beforeUser);
+    } catch (e) {
+      console.error('Failed to provision instructor record for role update:', e);
+    }
+  }
+
   await supabase.from('audit_log').insert({
     actor_id: adminUser.id,
     action: 'PROMOTE_USER_ROLE',
@@ -150,6 +169,7 @@ export async function updateUserRoleAction(userId: string, newRole: UserRole) {
   });
 
   revalidatePath('/admin/users');
+  revalidatePath('/admin/instructors');
 }
 
 /**
@@ -193,3 +213,153 @@ export async function disableUserAction(userId: string) {
 
   revalidatePath('/admin/users');
 }
+
+/**
+ * Assigns a department (BSIT or High School) to a scheduler.
+ */
+export async function updateSchedulerDepartmentAction(
+  userId: string,
+  department: 'BSIT' | 'High School' | null
+) {
+  const { supabase, adminUser } = await assertActiveAdmin();
+  const { createAdminClient } = await import('@/lib/supabase/admin');
+  const adminClient = createAdminClient();
+
+  // 1. Fetch user to verify they are a scheduler
+  const { data: targetProfile, error: fetchErr } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (fetchErr || !targetProfile) {
+    throw new Error('Target user not found.');
+  }
+
+  if (targetProfile.role !== 'scheduler') {
+    throw new Error('Department assignment is only applicable to users with the Scheduler role.');
+  }
+
+  // 2. Update user_metadata via Auth Admin API (stores instantly and synced with sessions)
+  const { data: authUser, error: authErr } = await adminClient.auth.admin.getUserById(userId);
+  if (authErr) {
+    throw new Error(`Auth lookup failed: ${authErr.message}`);
+  }
+
+  const existingMeta = authUser.user.user_metadata || {};
+  const updatedMeta = {
+    ...existingMeta,
+    department: department,
+  };
+
+  const { error: updateAuthErr } = await adminClient.auth.admin.updateUserById(userId, {
+    user_metadata: updatedMeta,
+  });
+
+  if (updateAuthErr) {
+    throw new Error(`Failed to update scheduler department in auth metadata: ${updateAuthErr.message}`);
+  }
+
+  // 3. Best-effort update on profiles table column if present
+  try {
+    await (adminClient.from('profiles') as any)
+      .update({ department: department })
+      .eq('id', userId);
+  } catch {
+    // Ignore if column not yet added to DB
+  }
+
+  // 4. Log to audit_log
+  await supabase.from('audit_log').insert({
+    actor_id: adminUser.id,
+    action: 'UPDATE_SCHEDULER_DEPARTMENT',
+    entity_type: 'profiles',
+    entity_id: userId,
+    before: { department: existingMeta.department || null },
+    after: { department },
+  });
+
+  revalidatePath('/admin/users');
+  revalidatePath('/scheduler');
+  revalidatePath('/scheduler/schedule');
+}
+
+/**
+ * Configures specific allowed subjects for a department scheduler.
+ * Pass null or empty array to reset to default department supervision.
+ */
+export async function updateSchedulerAllowedSubjectsAction(
+  userId: string,
+  allowedSubjectIds: string[] | null
+) {
+  const { supabase, adminUser } = await assertActiveAdmin();
+  const { createAdminClient } = await import('@/lib/supabase/admin');
+  const adminClient = createAdminClient();
+
+  const { data: targetProfile, error: fetchErr } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (fetchErr || !targetProfile) {
+    throw new Error('Target user not found.');
+  }
+
+  if (targetProfile.role !== 'scheduler') {
+    throw new Error('Subject scope assignment is only applicable to users with the Scheduler role.');
+  }
+
+  // 1. Update user_metadata via Auth Admin API
+  const { data: authUser, error: authErr } = await adminClient.auth.admin.getUserById(userId);
+  if (authErr) {
+    throw new Error(`Auth lookup failed: ${authErr.message}`);
+  }
+
+  const existingMeta = authUser.user.user_metadata || {};
+  const updatedMeta = {
+    ...existingMeta,
+    allowed_subject_ids: allowedSubjectIds,
+  };
+
+  const { error: updateAuthErr } = await adminClient.auth.admin.updateUserById(userId, {
+    user_metadata: updatedMeta,
+  });
+
+  if (updateAuthErr) {
+    throw new Error(`Failed to update allowed subjects in auth metadata: ${updateAuthErr.message}`);
+  }
+
+  // 2. Best-effort sync with scheduler_allowed_subjects table if present
+  try {
+    await (adminClient as any)
+      .from('scheduler_allowed_subjects')
+      .delete()
+      .eq('profile_id', userId);
+
+    if (allowedSubjectIds && allowedSubjectIds.length > 0) {
+      const rows = allowedSubjectIds.map((subId) => ({
+        profile_id: userId,
+        subject_id: subId,
+      }));
+      await (adminClient as any).from('scheduler_allowed_subjects').insert(rows);
+    }
+  } catch {
+    // Ignore if table is not yet migrated in remote DB
+  }
+
+  // 3. Log to audit_log
+  await supabase.from('audit_log').insert({
+    actor_id: adminUser.id,
+    action: 'UPDATE_SCHEDULER_ALLOWED_SUBJECTS',
+    entity_type: 'profiles',
+    entity_id: userId,
+    before: { allowed_subject_ids: existingMeta.allowed_subject_ids || null },
+    after: { allowed_subject_ids: allowedSubjectIds },
+  });
+
+  revalidatePath('/admin/users');
+  revalidatePath('/scheduler');
+  revalidatePath('/scheduler/schedule');
+}
+

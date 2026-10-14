@@ -4,6 +4,10 @@ import { createClient } from '@/lib/supabase/server';
 import { InstructorsClient, type InstructorWithDetails } from './InstructorsClient';
 import type { Subject } from '@/types/database';
 
+import { getCurriculumMetadataMap } from '@/lib/academic/curriculum-connector';
+import { getInstructorDepartment } from '@/lib/academic/instructor-departments';
+import { syncActiveInstructorProfiles } from '@/lib/academic/sync-instructors';
+
 export const dynamic = 'force-dynamic';
 
 export default async function AdminInstructorsPage() {
@@ -14,6 +18,15 @@ export default async function AdminInstructorsPage() {
   } = await supabase.auth.getUser();
 
   if (!user) redirect('/login');
+
+  // Ensure active instructor profiles are synced to instructors table
+  try {
+    await syncActiveInstructorProfiles();
+  } catch (err) {
+    console.error('Failed to auto-sync instructor profiles:', err);
+  }
+
+  const metadataMap = getCurriculumMetadataMap();
 
   const [instructorsRes, qualsRes, availRes, subjectsRes] = await Promise.all([
     supabase
@@ -47,8 +60,15 @@ export default async function AdminInstructorsPage() {
         end_time: a.end_time,
       }));
 
+    const dept = getInstructorDepartment(
+      inst.id,
+      (inst as any).department,
+      (inst.profiles as any)?.department
+    );
+
     return {
       ...inst,
+      department: dept,
       profile: inst.profiles,
       qualifications: qualIds,
       availability: slots,
@@ -56,10 +76,11 @@ export default async function AdminInstructorsPage() {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 w-100 min-w-0">
       <InstructorsClient
         instructors={instructorsList}
         allSubjects={(subjectsRes.data || []) as Subject[]}
+        metadataMap={metadataMap}
       />
     </div>
   );

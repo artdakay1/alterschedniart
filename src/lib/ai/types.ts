@@ -39,6 +39,7 @@ export type SchedulerPreferences = {
   splitTwoDays?: boolean;
   customNotes?: string;
   isRefineMode?: boolean;
+  refineScope?: 'targeted' | 'whole_block';
 };
 
 export type BlockDraftPayload = {

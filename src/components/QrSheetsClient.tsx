@@ -2,7 +2,7 @@
 
 import React, { useState, useTransition } from 'react';
 import Link from 'next/link';
-import { revokeQrTokenAction, generateTokensForVersionAction } from '@/app/actions/qr-actions';
+import { revokeQrTokenAction } from '@/app/actions/qr-actions';
 import type { AcademicTerm, ScheduleVersion, QrToken, Block, Program } from '@/types/database';
 
 export interface BlockTokenItem {

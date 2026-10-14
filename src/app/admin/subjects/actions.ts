@@ -286,7 +286,7 @@ export async function saveSubjectAction(
     semester: meta?.semester || existingMeta?.semester || '1st Semester',
     facility: facility,
     preferredRoomId: preferredRoomId || undefined,
-    category: meta?.category || existingMeta?.category,
+    category: meta?.category !== undefined ? meta.category : existingMeta?.category,
     order: typeof meta?.order === 'number' ? meta.order : existingMeta?.order ?? 0,
   };
 
@@ -376,7 +376,7 @@ export async function saveSubjectsBatchAction(rows: BatchSubjectInput[]) {
     throw new Error(`Failed to save subjects: ${error.message}`);
   }
 
-  // Persist extended metadata (yearLevel, semester, facility, preferredRoomId, order)
+  // Persist extended metadata (yearLevel, semester, facility, preferredRoomId, category, order)
   const metaMapEntries: Record<string, SubjectMetaRecord> = {};
   rows.forEach((r, i) => {
     const code = r.code.trim().toUpperCase();
@@ -385,6 +385,7 @@ export async function saveSubjectsBatchAction(rows: BatchSubjectInput[]) {
       semester: r.semester || '1st Semester',
       facility: r.facility || 'lecture',
       preferredRoomId: r.preferred_room_id || undefined,
+      category: (r.category as any) || undefined,
       order: typeof r.order === 'number' ? r.order : i,
     };
     metaMapEntries[code] = metaRecord;
@@ -407,6 +408,116 @@ export async function saveSubjectsBatchAction(rows: BatchSubjectInput[]) {
   revalidatePath('/scheduler/schedule');
 
   return { success: true, count: rows.length, metadataMap: metaMapEntries };
+}
+
+export async function updateSubjectCategoryAction(
+  id: string,
+  category: 'bsit_major' | 'non_bsit_minor' | 'high_school'
+) {
+  const { supabase, user } = await assertAdminCaller();
+
+  const isBsit = category === 'bsit_major';
+  const { data: updatedSub, error } = await supabase
+    .from('subjects')
+    .update({ is_bsit: isBsit })
+    .eq('id', id)
+    .select('id, code')
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to update subject category: ${error.message}`);
+  }
+
+  const currentMeta = getSubjectMetadataMapInternal();
+  const existingMeta = currentMeta[id] || (updatedSub?.code ? currentMeta[updatedSub.code.toUpperCase()] : undefined);
+
+  const metaRecord: SubjectMetaRecord = {
+    yearLevel: existingMeta?.yearLevel || '1st Year',
+    semester: existingMeta?.semester || '1st Semester',
+    facility: existingMeta?.facility || 'lecture',
+    preferredRoomId: existingMeta?.preferredRoomId || undefined,
+    category: category,
+    order: existingMeta?.order ?? 0,
+  };
+
+  const toSave: Record<string, SubjectMetaRecord> = {
+    [id]: metaRecord,
+  };
+  if (updatedSub?.code) {
+    toSave[updatedSub.code.toUpperCase()] = metaRecord;
+  }
+  saveSubjectMetadataBatch(toSave);
+
+  await supabase.from('audit_log').insert({
+    actor_id: user.id,
+    action: 'UPDATE_SUBJECT_CATEGORY',
+    entity_type: 'subjects',
+    entity_id: id,
+    before: { category: existingMeta?.category },
+    after: { category, is_bsit: isBsit },
+  });
+
+  revalidatePath('/admin/subjects');
+  revalidatePath('/scheduler/subjects');
+  revalidatePath('/scheduler/schedule');
+
+  return { success: true, metadataRecord: metaRecord };
+}
+
+export async function bulkUpdateSubjectCategoryAction(
+  ids: string[],
+  category: 'bsit_major' | 'non_bsit_minor' | 'high_school'
+) {
+  const { supabase, user } = await assertAdminCaller();
+
+  if (!ids || ids.length === 0) return { success: true, count: 0 };
+
+  const isBsit = category === 'bsit_major';
+  const { data: updatedSubs, error } = await supabase
+    .from('subjects')
+    .update({ is_bsit: isBsit })
+    .in('id', ids)
+    .select('id, code');
+
+  if (error) {
+    throw new Error(`Failed to update subjects category: ${error.message}`);
+  }
+
+  const currentMeta = getSubjectMetadataMapInternal();
+  const toSave: Record<string, SubjectMetaRecord> = {};
+
+  for (const sub of (updatedSubs || [])) {
+    const existingMeta = currentMeta[sub.id] || (sub.code ? currentMeta[sub.code.toUpperCase()] : undefined);
+    const metaRecord: SubjectMetaRecord = {
+      yearLevel: existingMeta?.yearLevel || '1st Year',
+      semester: existingMeta?.semester || '1st Semester',
+      facility: existingMeta?.facility || 'lecture',
+      preferredRoomId: existingMeta?.preferredRoomId || undefined,
+      category: category,
+      order: existingMeta?.order ?? 0,
+    };
+    toSave[sub.id] = metaRecord;
+    if (sub.code) {
+      toSave[sub.code.toUpperCase()] = metaRecord;
+    }
+  }
+
+  saveSubjectMetadataBatch(toSave);
+
+  await supabase.from('audit_log').insert({
+    actor_id: user.id,
+    action: 'BULK_UPDATE_SUBJECT_CATEGORY',
+    entity_type: 'subjects',
+    entity_id: null,
+    before: null,
+    after: { ids, category, is_bsit: isBsit },
+  });
+
+  revalidatePath('/admin/subjects');
+  revalidatePath('/scheduler/subjects');
+  revalidatePath('/scheduler/schedule');
+
+  return { success: true, count: ids.length, metadataMap: toSave };
 }
 
 export async function saveSubjectsOrderAction(orderMap: Record<string, number>) {

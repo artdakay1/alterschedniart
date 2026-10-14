@@ -4,904 +4,928 @@
     "semester": "1st Semester",
     "facility": "lab",
     "preferredRoomId": "50000000-0000-0000-0000-000000000004",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "62c56a76-7678-4c61-86ed-2e4cbd3791ba": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "lab",
     "preferredRoomId": "50000000-0000-0000-0000-000000000004",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "THEO 1": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 0,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 0
   },
   "93ce0914-138b-49a6-b85a-fb6851225fce": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 0,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 0
   },
   "GE 1": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "1bb81c21-be7f-4c29-9950-b26f043e6929": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "GE 2": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "5aad2da0-ed82-4963-870f-a9825a34f6c9": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "COMP 1": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "db8fc3f2-de1c-4777-a174-4473a192f931": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "PROG 1": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "a84f523d-39aa-4af2-b6e9-47ff428704c4": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "MATH PREP": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 6,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 6
   },
   "4e295411-8b44-458c-ac4c-0fb50e8720d7": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 6,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 6
   },
   "PE 1": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 7,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 7
   },
   "c62d952a-43f6-475b-8e70-a10a90f53770": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 7,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 7
   },
   "NSTP 1": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 8,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "e3b7868c-065c-420e-94e4-a26a98da0dd5": {
     "yearLevel": "1st Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 8,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "THEO 2": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "24199a86-9124-4ba5-8a28-594a7b04696b": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "GE 3": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "62af9d07-0e05-4171-9c55-1528595b5649": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "GE 4": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 3,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 3
   },
   "9e6c2803-c8b7-4112-8d9a-a3e040e700c9": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 3,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 3
   },
   "PROG 2": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "8b326d4e-c104-4255-a39a-0978fd8f7425": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "DISCRETE 1": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 5
   },
   "87616937-c923-4f1a-8a3b-84cd91fa387e": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 5
   },
   "WEB 1": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 6
   },
   "db693f77-863a-469d-bf15-80a729707039": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 6
   },
   "DATASTRUCT 1": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 7,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 7
   },
   "04350295-847e-4dcd-9daf-5bee9bee15dc": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 7,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 7
   },
   "PE 2": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 8,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "4704c637-e5aa-4a6f-8c44-e82086add7fe": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 8,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "NSTP 2": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 9,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 9
   },
   "861d511e-941c-4702-9c2d-853361fa6a80": {
     "yearLevel": "1st Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 9,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 9
   },
   "GE 5": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "50e76c63-6ef8-46cd-b4e8-ec93f8983253": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "GE 6": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 3,
-    "category": "bsit_major"
+    "preferredRoomId": "50000000-0000-0000-0000-000000000001",
+    "category": "non_bsit_minor",
+    "order": 3
   },
   "60eb4cb6-428c-4122-90d8-c18af6ec7146": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 3,
-    "category": "bsit_major"
+    "preferredRoomId": "50000000-0000-0000-0000-000000000001",
+    "category": "non_bsit_minor",
+    "order": 3
   },
   "OOP": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "f0382cb6-921c-433d-ba78-7e02539ea1c1": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "IM 1": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "abcf8479-9806-46f8-a29b-a4b64673066d": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "ACCTG": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 6,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 6
   },
   "9f94de9a-3de9-4764-8ba2-2bbf85bafa17": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 6,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 6
   },
   "PT": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 7,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 7
   },
   "846ed5ea-730b-490e-be92-136d866508ff": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 7,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 7
   },
   "GEEL 1": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 8,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "53068aab-fc36-4a4b-a4a6-d55f7dd0ffe2": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 8,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "PE 3": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 9,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 9
   },
   "866a5551-541e-4fc6-81e7-ac0d0a1f1b5b": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 9,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 9
   },
   "THEO 4": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
-    "facility": "lecture",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "facility": "unspecified",
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "515133da-c085-4b4a-88b0-dbae4295a3a3": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
-    "facility": "lecture",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "facility": "unspecified",
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "GE 7": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "487de933-bc29-48d0-af99-2407084fa640": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "IM 2": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "88110061-4a9f-413b-8d3c-ca0b6f269fb8": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "QM": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 4,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 4
   },
   "304dfce4-0cd3-439f-9494-0b161d668d6a": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 4,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 4
   },
   "NET 1": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "69e21e8d-4622-4661-9b1a-ef5b3f212bba": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "IPT 1": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 6
   },
   "eec3c86d-9d51-4368-a2ea-68f4ff25218f": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 6
   },
   "GEEL 2": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 7,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 7
   },
   "836008ba-2c60-48f4-81f0-88b1e067f8ec": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 7,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 7
   },
   "GEEL 3": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
-    "facility": "lecture",
-    "order": 8,
-    "category": "non_bsit_minor"
+    "facility": "unspecified",
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "8db35418-e248-4dc4-a795-a811e9c9b63c": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
-    "facility": "lecture",
-    "order": 8,
-    "category": "non_bsit_minor"
+    "facility": "unspecified",
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "PE 4": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 9,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 9
   },
   "3743fbbd-bd23-4d12-b1fc-a0457c49cfc4": {
     "yearLevel": "2nd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 9,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 9
   },
   "REED 1": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "cefa4ca4-f669-4da0-9af5-01b1319c7fe1": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "GE 8": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 2,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "79497f21-efdb-488a-942a-3228bfbe0fc9": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 2,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "NET 2": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "081be42c-5f77-490e-abc6-be78fd62f0f6": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "ED": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "4233e63e-03f1-400f-83a0-c787105e98b0": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "APPSDEV 1": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "e8f22bc4-9ac4-4432-b630-7297151a27e5": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "SAD": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 6
   },
   "af8dcf3c-0a32-4fe1-9df1-dc0671848161": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 6
   },
   "OS": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 7,
-    "category": "bsit_major"
+    "preferredRoomId": "50000000-0000-0000-0000-000000000001",
+    "category": "non_bsit_minor",
+    "order": 7
   },
   "956173e1-b05f-457e-b3b6-f2c0a6490457": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 7,
-    "category": "bsit_major"
+    "preferredRoomId": "50000000-0000-0000-0000-000000000001",
+    "category": "non_bsit_minor",
+    "order": 7
   },
   "SIA": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
-    "facility": "unspecified",
-    "order": 8,
-    "category": "bsit_major"
+    "facility": "lecture",
+    "preferredRoomId": "50000000-0000-0000-0000-000000000002",
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "03fd2e7a-d916-42f1-b705-b098cec4d37a": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
-    "facility": "unspecified",
-    "order": 8,
-    "category": "bsit_major"
+    "facility": "lecture",
+    "preferredRoomId": "50000000-0000-0000-0000-000000000002",
+    "category": "non_bsit_minor",
+    "order": 8
   },
   "IT PROF EL 1": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 9,
-    "category": "bsit_major"
+    "preferredRoomId": "50000000-0000-0000-0000-000000000003",
+    "category": "bsit_major",
+    "order": 9
   },
   "b48b0e85-9d72-45de-a059-551b694e4954": {
     "yearLevel": "3rd Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 9,
-    "category": "bsit_major"
+    "preferredRoomId": "50000000-0000-0000-0000-000000000003",
+    "category": "bsit_major",
+    "order": 9
   },
   "REED 2": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "5e2b14c6-12f1-40dc-9bff-630661908db8": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "GE 9": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "80f483cb-670d-4185-b343-4afe5ff433da": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 2,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 2
   },
   "IAS 1": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "5ca71d75-ab90-482b-9837-933e37fe0373": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "RESEARCH 1": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 4
   },
   "0c73e41a-d4f4-4359-8de9-9913f254dc37": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "non_bsit_minor",
+    "order": 4
   },
   "WEB 2": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "ad9b99a2-2e3f-4139-ad57-4def19e77007": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 5,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 5
   },
   "IM 3": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 6
   },
   "df93c0bf-d73b-451a-837b-41ecf99da9e7": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 6
   },
   "IT PROF EL 2": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 7,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 7
   },
   "8cc95b94-5705-4f1d-89ed-a78abf7d527c": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 7,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 7
   },
   "MMC": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 8,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 8
   },
   "8ac55c81-2a6d-4eb6-9f3b-a69d820b4c82": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 8,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 8
   },
   "CAPSTONE 1": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 9,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 9
   },
   "38d0a011-da38-41a1-bea6-a10c6d05264e": {
     "yearLevel": "3rd Year",
     "semester": "2nd Semester",
     "facility": "lecture",
-    "order": 9,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 9
   },
   "REED 3": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "3b544e72-2eec-4fcd-a4a0-ed1d9677a7ea": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 1
   },
   "SA": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 2,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 2
   },
   "ce20a68a-95c4-4436-ad58-2bec11a18f6f": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 2,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 2
   },
   "CAPSTONE 2": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "852adf52-1df7-4c55-bb20-3137f7e17cb2": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 3,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 3
   },
   "IT PROF EL 3": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "188641c9-51fc-4608-87eb-d22021089489": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 4,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 4
   },
   "IT REVIEW": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 5,
-    "category": "bsit_major"
+    "preferredRoomId": "5af4799f-5fe1-4201-812f-1a67fc6f0153",
+    "category": "non_bsit_minor",
+    "order": 5
   },
   "caa07d78-6bd1-444f-86ae-823eeb13c09b": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 5,
-    "category": "bsit_major"
+    "preferredRoomId": "5af4799f-5fe1-4201-812f-1a67fc6f0153",
+    "category": "non_bsit_minor",
+    "order": 5
   },
   "TECHNO": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lecture",
-    "order": 6,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 6
   },
   "df5eec23-dfbc-448f-8de5-85ff76c859f0": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 6
   },
   "PRAC": {
     "yearLevel": "4th Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 1
   },
   "8fc6bf75-a264-459f-aa63-107044fae61a": {
     "yearLevel": "4th Year",
     "semester": "2nd Semester",
     "facility": "unspecified",
-    "order": 1,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 1
   },
   "IT PROF EL 4": {
     "yearLevel": "4th Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 2,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 2
   },
   "acf8bd16-547a-4f03-abe7-fa22c8585287": {
     "yearLevel": "4th Year",
     "semester": "2nd Semester",
     "facility": "lab",
-    "order": 2,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 2
   },
   "THEO 3": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 0,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 0
   },
   "6baaf140-2add-45c8-9738-adc67792d552": {
     "yearLevel": "2nd Year",
     "semester": "1st Semester",
     "facility": "unspecified",
-    "order": 0,
-    "category": "non_bsit_minor"
+    "category": "non_bsit_minor",
+    "order": 0
   },
   "ROBOTICS": {
     "yearLevel": "Grade 12 (SHS)",
     "semester": "1st Semester",
-    "facility": "lecture",
-    "order": 0,
-    "category": "high_school"
+    "facility": "unspecified",
+    "category": "high_school",
+    "order": 0
   },
   "485215b8-34af-4a2d-ba7d-1e22b261ecff": {
     "yearLevel": "Grade 12 (SHS)",
     "semester": "1st Semester",
-    "facility": "lecture",
-    "order": 0,
-    "category": "high_school"
+    "facility": "unspecified",
+    "category": "high_school",
+    "order": 0
   },
   "IT 1": {
     "yearLevel": "Grade 12 (SHS)",
     "semester": "1st Semester",
-    "facility": "lecture",
-    "order": 0,
-    "category": "high_school"
+    "facility": "unspecified",
+    "category": "high_school",
+    "order": 0
   },
   "e72d5df2-f4c0-4ee6-8fb1-6886a2ea40a4": {
     "yearLevel": "Grade 12 (SHS)",
     "semester": "1st Semester",
-    "facility": "lecture",
-    "order": 0,
-    "category": "high_school"
+    "facility": "unspecified",
+    "category": "high_school",
+    "order": 0
   },
   "GEEL 4": {
     "yearLevel": "4th Year",
     "semester": "1st Semester",
     "facility": "lab",
-    "order": 6,
-    "category": "bsit_major"
+    "category": "bsit_major",
+    "order": 6
+  },
+  "ARDUINO": {
+    "yearLevel": "Grade 11 (SHS)",
+    "semester": "1st Semester",
+    "facility": "unspecified",
+    "category": "high_school",
+    "order": 0
+  },
+  "3cf73eb8-b027-4516-819a-3f006507d1e0": {
+    "yearLevel": "Grade 11 (SHS)",
+    "semester": "1st Semester",
+    "facility": "unspecified",
+    "category": "high_school",
+    "order": 0
   }
 }

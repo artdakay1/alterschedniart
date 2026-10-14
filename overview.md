@@ -61,7 +61,7 @@ d:/alterschedniart/
 │   │   ├── academic/             # Curriculum connectors & year-level utilities
 │   │   ├── ai/                   # Gemini AI prompt engine, policies & heuristic fallback
 │   │   ├── alterations/          # Alteration lifecycle, conflict preview & approvals
-│   │   ├── conflict-engine/      # 10 Hard rules, 4 Soft rules, timetable grid engine
+│   │   ├── conflict-engine/      # 9 Hard rules, 4 Soft rules, timetable grid engine
 │   │   ├── publish/              # Pre-publish conflict validation gate
 │   │   └── supabase/             # Server/client/admin Supabase database clients
 │   ├── proxy.ts                  # Next.js 16 Edge proxy for session refreshes and route guards
@@ -82,7 +82,7 @@ The database runs on PostgreSQL via Supabase, with Row Level Security (RLS) enfo
 3. **`departments` & `curricula`**: Departmental structures and specific curriculum revisions.
 4. **`courses` / `subjects`**: Subject catalog (code, title, lecture/lab contact hours, units, category: `BSIT Major` vs `Non-BSIT / Minor`).
 5. **`year_levels` & `sections`**: Student year levels (1st–4th year) and sections (e.g. `BSIT 1-A`, `BSIT 3-B`).
-6. **`rooms`**: Facilities tagged with type (`lecture`, `laboratory`, `unspecified`), capacity, and equipment tags.
+6. **`rooms`**: Facilities tagged with type (`lecture`, `laboratory`), capacity, allowed departments (`BSIT`, `High School`, or shared), and department-scoping rules.
 7. **`instructors`**: Faculty members with employment status (`full-time`, `part-time`), maximum load units, preferred rooms, and weekly available time windows.
 8. **`class_offerings`**: Bridge between sections, subjects, assigned instructors, and terms.
 9. **`timetable_entries`**: Scheduled time slots with `day_of_week`, `start_time`, `end_time`, `room_id`, `instructor_id`, `offering_id`, and status (`draft`, `published`).
@@ -104,19 +104,16 @@ The Conflict Engine (`src/lib/conflict-engine/`) guarantees zero-conflict timeta
 1. **`double_booked_instructor`**: An instructor cannot be assigned to more than one session at the same time.
 2. **`double_booked_room`**: A physical room cannot host multiple classes simultaneously (*exempts subjects with unspecified room requirements / `room_id: null`*).
 3. **`double_booked_section`**: A student cohort section cannot have overlapping classes.
-4. **`room_capacity_exceeded`**: Section student count cannot exceed room capacity.
-5. **`outside_availability`**: Sessions cannot be scheduled outside an instructor's declared availability.
-6. **`missing_room_equipment`**: Specialized classes (e.g. programming labs) must be assigned to rooms with matching equipment.
-7. **`duplicate_subject_in_block`**: A section cannot have the same subject assigned multiple times in a semester.
-8. **`incomplete_hours`**: Scheduled duration must match curriculum requirements.
-9. **`invalid_time_slot`**: Sessions must align to the canonical start times and 1.5h duration multiples.
-10. **`spans_lunch_break`**: Rejects any entry spanning across the 12:30 PM – 1:00 PM window.
+4. **`outside_availability`**: Sessions cannot be scheduled outside an instructor's declared availability.
+5. **`missing_room_equipment`**: Specialized classes (e.g. programming labs) must be assigned to rooms with matching equipment.
+6. **`duplicate_subject_in_block`**: A section cannot have the same subject assigned multiple times in a semester.
+7. **`incomplete_hours`**: Scheduled duration must match curriculum requirements.
+8. **`invalid_time_slot`**: Sessions must align to the canonical start times and 1.5h duration multiples (exempts 1-unit and 2-unit subjects, allowing 1-hour and 2-hour continuous sessions on any day Monday–Saturday).
+9. **`spans_lunch_break`**: Rejects any entry spanning across the 12:30 PM – 1:00 PM window.
 
 ### 5.3 Soft Rules (Advisories for Schedulers)
-1. **`irregular_day_pairing`**: Standard lectures should follow Monday/Wednesday or Tuesday/Thursday pairings. (Friday, Saturday, capstone, and labs are exempt).
-2. **`lab_room_underused`**: Flags when a general lecture without computer needs occupies a computer laboratory.
-3. **`heavy_load_day`**: Advises when an instructor exceeds 6 hours of teaching on a single day.
-4. **`unqualified_instructor`**: Advises when an instructor is assigned to a subject outside their primary qualification.
+1. **`irregular_day_pairing`**: Multi-session lecture courses should follow Monday/Wednesday or Tuesday/Thursday pairings. (Friday, Saturday, capstone, labs, and 1-2 unit single continuous sessions are exempt).
+2. **`unqualified_instructor`**: Advises when an instructor is assigned to a subject outside their primary qualification.
 
 ---
 
@@ -167,7 +164,28 @@ During the latest codebase analysis, the following code cleanups and enhancement
 
 ## 9. Operational Guides for Roles
 
-- **Admin**: Has full access to manage faculty, rooms, curricula, user accounts, and final approvals for schedule alterations.
-- **Scheduler**: Has access to the Timetable Workbench, AI Draft Generator, Conflict Inspector, and the Pre-Publish Validation Gate.
+- **Admin**: Has full unrestricted global access across all departments, subjects, faculty, rooms, curricula, user accounts, and final approvals for schedule alterations. Admins can configure department assignments and fine-tune permitted subject scopes for schedulers.
+- **Scheduler**: Has access to the Timetable Workbench, AI Draft Generator, Conflict Inspector, and Pre-Publish Validation Gate, scoped to their assigned department (`BSIT` or `High School`) and admin-approved subject list.
 - **Instructor**: Views their personalized schedule, submits alteration requests (with instant conflict preview), and sets their availability preferences.
 - **Student / Public**: Can access real-time published timetables via section or room QR codes without requiring login credentials (`/s/[code]`).
+
+---
+
+## 10. Department Schedulers & Subject Scope Permissions System
+
+Implemented to satisfy institutional separation between **BSIT** (College of Computer Studies) and **High School** departments (referenced in CCTC `Class-Program-for-BSIT-2627.pdf`):
+
+1. **Admin User Management (`/admin/users`)**:
+   - **Department Assignment**: Admins can assign Schedulers to either `BSIT` or `High School`.
+   - **Allowed Subjects Configuration**: Admins can click "Configure Scope" to open an interactive modal displaying all subjects categorized into **BSIT Major**, **General Education**, and **High School**. Admins can toggle individual subjects or use quick-select buttons ("Select All BSIT Major", "Select All High School", "Select All Subjects", "Reset to Department Default").
+   - **Zero-Latency Persistence**: Changes are immediately written to Supabase `auth.users.user_metadata` for instantaneous session propagation and synced to the `profiles` table and `scheduler_allowed_subjects` join table with audit logging.
+
+2. **Timetable Workbench Scope Enforcement (`/scheduler/schedule`)**:
+   - **Context Preservation**: The complete timetable grid and spreadsheet view display all scheduled subjects so schedulers retain complete visibility over room occupancy and student block schedules.
+   - **Unauthorized Subject Locking**: Entries for subjects outside the scheduler's scope are marked with a `Locked` badge. Drag-and-drop, inline editing, and deletion are disabled for unauthorized subjects.
+   - **Unassigned Offerings Filtering**: The offering sidebar / unassigned class drawer filters out subjects outside the scheduler's scope.
+   - **Server-Side Enforcement**: `saveScheduleEntryAction` and `deleteScheduleEntryAction` enforce strict server-side permission checks. Any unauthorized creation, edit, or deletion by a scheduler is rejected with an explanatory error. Admins retain full global scheduling authority.
+
+3. **AI Generation Scope (`/scheduler/generate`)**:
+   - When a department scheduler runs the AI draft generator, only offerings within their permitted subject scope are scheduled. Unsupervised subjects are untouched and safely preserved.
+

@@ -40,6 +40,9 @@ export default async function AdminLayout({
 
   const navLinks = [
     { label: 'Dashboard', href: '/admin', icon: 'bi-grid-fill' },
+    { label: 'Schedule Editor', href: '/scheduler/schedule', icon: 'bi-calendar3' },
+    { label: 'Schedule Generator', href: '/scheduler/generate', icon: 'bi-cpu' },
+    { label: 'Published & Saved', href: '/scheduler/schedules', icon: 'bi-table' },
     { label: 'Terms', href: '/admin/terms', icon: 'bi-calendar-range' },
     { label: 'Programs & Blocks', href: '/admin/blocks', icon: 'bi-mortarboard' },
     { label: 'Subjects', href: '/admin/subjects', icon: 'bi-book' },

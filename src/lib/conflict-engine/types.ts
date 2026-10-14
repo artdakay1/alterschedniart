@@ -30,6 +30,7 @@ export type SubjectInfo = {
   id: string;
   code?: string;
   title?: string;
+  units?: number;
   requiresLab: boolean;
   facilityType?: 'lecture' | 'lab' | 'unspecified';
   lectureHours: number;

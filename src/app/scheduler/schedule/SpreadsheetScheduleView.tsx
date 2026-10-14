@@ -33,6 +33,7 @@ interface SpreadsheetScheduleViewProps {
   onDeleteEntry: (entryId: string) => void;
   onAddEntry: () => void;
   onGenerateAiDraft?: () => void;
+  isSubjectAllowed?: (subjectId?: string | null) => boolean;
 }
 
 // Helpers for day and time formatting
@@ -103,6 +104,7 @@ interface RowItem {
   room: string;
   units: number;
   entry: ScheduleEntry;
+  subjectId?: string;
 }
 
 interface SubjectGroup {
@@ -133,6 +135,7 @@ export function SpreadsheetScheduleView({
   onDeleteEntry,
   onAddEntry,
   onGenerateAiDraft,
+  isSubjectAllowed,
 }: SpreadsheetScheduleViewProps) {
   const [filterScope, setFilterScope] = useState<'all' | 'block'>(lockToBlock ? 'block' : 'all');
   const [selectedFilterBlockId, setSelectedFilterBlockId] = useState<string>('');
@@ -313,6 +316,7 @@ export function SpreadsheetScheduleView({
             room: roomStr,
             units,
             entry: firstE,
+            subjectId: sub?.id,
           });
         });
       });
@@ -488,10 +492,10 @@ export function SpreadsheetScheduleView({
             <button
               onClick={onGenerateAiDraft}
               className="btn btn-sm btn-outline-primary d-flex align-items-center gap-1.5 px-3"
-              title="Generate schedule draft with AI"
+              title="Generate schedule using algorithm"
             >
-              <i className="bi bi-stars text-primary"></i>
-              <span>AI Auto-Schedule</span>
+              <i className="bi bi-cpu text-primary"></i>
+              <span>Generate Schedule</span>
             </button>
           )}
 
@@ -830,8 +834,8 @@ export function SpreadsheetScheduleView({
                               onClick={onGenerateAiDraft}
                               className="btn btn-sm btn-outline-primary d-flex align-items-center gap-1.5"
                             >
-                              <i className="bi bi-stars"></i>
-                              <span>Auto-Place with AI</span>
+                              <i className="bi bi-cpu"></i>
+                              <span>Generate Schedule</span>
                             </button>
                           )}
                           <button
@@ -942,26 +946,45 @@ export function SpreadsheetScheduleView({
                                   <span className="flex-grow-1 text-center" style={{ lineHeight: 1.25 }}>{row.description}</span>
                                   {/* Quick Actions (Draft mode only) */}
                                   {!isReadOnly && (
-                                    <div className="row-actions opacity-0 transition ms-1 d-inline-flex gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => onEditEntry(row.entry)}
-                                        className="btn btn-outline-primary btn-sm py-0 px-1"
-                                        style={{ fontSize: '9px', lineHeight: 1.2 }}
-                                        title="Edit Entry"
-                                      >
-                                        Edit
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => onDeleteEntry(row.entry.id)}
-                                        className="btn btn-outline-danger btn-sm py-0 px-1"
-                                        style={{ fontSize: '9px', lineHeight: 1.2 }}
-                                        title="Delete Entry"
-                                      >
-                                        Del
-                                      </button>
-                                    </div>
+                                    (() => {
+                                      const isEntryAllowed = isSubjectAllowed
+                                        ? isSubjectAllowed(row.subjectId)
+                                        : true;
+                                      if (!isEntryAllowed) {
+                                        return (
+                                          <span
+                                            className="badge bg-secondary-subtle text-secondary border border-secondary-subtle py-0.5 px-1 ms-1 font-monospace"
+                                            style={{ fontSize: '8.5px' }}
+                                            title="Supervised by another department (Read-Only)"
+                                          >
+                                            <i className="bi bi-lock-fill me-0.5" />
+                                            Locked
+                                          </span>
+                                        );
+                                      }
+                                      return (
+                                        <div className="row-actions opacity-0 transition ms-1 d-inline-flex gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => onEditEntry(row.entry)}
+                                            className="btn btn-outline-primary btn-sm py-0 px-1"
+                                            style={{ fontSize: '9px', lineHeight: 1.2 }}
+                                            title="Edit Entry"
+                                          >
+                                            Edit
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => onDeleteEntry(row.entry.id)}
+                                            className="btn btn-outline-danger btn-sm py-0 px-1"
+                                            style={{ fontSize: '9px', lineHeight: 1.2 }}
+                                            title="Delete Entry"
+                                          >
+                                            Del
+                                          </button>
+                                        </div>
+                                      );
+                                    })()
                                   )}
                                 </div>
                               </td>

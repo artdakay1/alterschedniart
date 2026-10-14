@@ -56,6 +56,43 @@ export function formatShortBlockName(
   return `${code} - ${yearLevel}${rawSec}`;
 }
 
+export function doesBlockMatchYearConfig(
+  b: Block,
+  cfg: YearLevelGroup,
+  programs: Program[]
+): boolean {
+  const prog = programs.find((p) => p.id === b.program_id);
+  const isHS =
+    prog?.code.toUpperCase() === 'HS' ||
+    prog?.name.toLowerCase().includes('high school');
+
+  if (cfg.isHighSchool !== isHS) return false;
+
+  if (isHS) {
+    const sec = (b.section || '').trim();
+    const match = sec.match(/Grade\s*(\d+)/i);
+    if (match) {
+      const gradeNum = match[1];
+      return (
+        cfg.id === `hs-${gradeNum}` ||
+        cfg.title.includes(`Grade ${gradeNum}`) ||
+        cfg.targetSubjectsYearLevel.includes(`Grade ${gradeNum}`)
+      );
+    }
+    // Fallback for blocks where section might not have "Grade" explicitly
+    if (cfg.id === 'hs-11' && (b.year_level === 3 || sec.includes('11'))) return true;
+    if (cfg.id === 'hs-12' && (b.year_level === 4 || sec.includes('12'))) return true;
+    if (cfg.id === 'hs-7' && (b.year_level === 1 || sec.includes('7'))) return true;
+    if (cfg.id === 'hs-8' && (b.year_level === 2 || sec.includes('8'))) return true;
+    if (cfg.id === 'hs-9' && (b.year_level === 3 || sec.includes('9'))) return true;
+    if (cfg.id === 'hs-10' && (b.year_level === 4 || sec.includes('10'))) return true;
+    return b.year_level === cfg.yearLevelNum;
+  }
+
+  // College / BSIT
+  return b.year_level === cfg.yearLevelNum;
+}
+
 export function BlocksClient({
   programs,
   blocks,
@@ -67,7 +104,7 @@ export function BlocksClient({
   // Dynamic department filter: '(All Departments)' or program code (e.g. BSIT, HS)
   const [selectedDept, setSelectedDept] = useState<string>('all');
 
-  // Year level configs state (no Grade 7 to 10; defaults to BSIT 1-4 and HS Grade 11-12)
+  // Year level configs state (BSIT 1-4 and High School Grade 7-12)
   const [yearLevelConfigs, setYearLevelConfigs] = useState<YearLevelGroup[]>(
     initialYearLevelConfigs.length > 0
       ? initialYearLevelConfigs
@@ -113,11 +150,51 @@ export function BlocksClient({
             isHighSchool: false,
           },
           {
+            id: 'hs-7',
+            deptCode: 'HS',
+            deptName: 'High School Department',
+            yearLevelNum: 1,
+            title: 'Grade 7 (JHS)',
+            subTitle: 'Junior High School Grade 7 foundation courses and exploratory technology',
+            targetSubjectsYearLevel: 'Grade 7 (JHS)',
+            isHighSchool: true,
+          },
+          {
+            id: 'hs-8',
+            deptCode: 'HS',
+            deptName: 'High School Department',
+            yearLevelNum: 2,
+            title: 'Grade 8 (JHS)',
+            subTitle: 'Junior High School Grade 8 intermediate academic subjects and basic computing',
+            targetSubjectsYearLevel: 'Grade 8 (JHS)',
+            isHighSchool: true,
+          },
+          {
+            id: 'hs-9',
+            deptCode: 'HS',
+            deptName: 'High School Department',
+            yearLevelNum: 3,
+            title: 'Grade 9 (JHS)',
+            subTitle: 'Junior High School Grade 9 core curriculum and specialized technology topics',
+            targetSubjectsYearLevel: 'Grade 9 (JHS)',
+            isHighSchool: true,
+          },
+          {
+            id: 'hs-10',
+            deptCode: 'HS',
+            deptName: 'High School Department',
+            yearLevelNum: 4,
+            title: 'Grade 10 (JHS)',
+            subTitle: 'Junior High School Grade 10 graduating cohort preparing for senior high tracks',
+            targetSubjectsYearLevel: 'Grade 10 (JHS)',
+            isHighSchool: true,
+          },
+          {
             id: 'hs-11',
             deptCode: 'HS',
             deptName: 'High School Department',
             yearLevelNum: 3,
-            title: 'Grade 11 - STEM & TVL',
+            title: 'Grade 11 (SHS) - STEM & TVL',
             subTitle: 'Senior High School Grade 11 specialized academic tracks (Pre-Calculus & TVL-ICT)',
             targetSubjectsYearLevel: 'Grade 11 (SHS)',
             isHighSchool: true,
@@ -127,7 +204,7 @@ export function BlocksClient({
             deptCode: 'HS',
             deptName: 'High School Department',
             yearLevelNum: 4,
-            title: 'Grade 12 - STEM & TVL',
+            title: 'Grade 12 (SHS) - STEM & TVL',
             subTitle: 'Senior High School Grade 12 graduating projects and computer systems servicing NC II',
             targetSubjectsYearLevel: 'Grade 12 (SHS)',
             isHighSchool: true,
@@ -260,14 +337,36 @@ export function BlocksClient({
     setIsBlockModalOpen(true);
   };
 
-  const handleOpenAddBlockForYear = (deptCode: string, yearLevelNum: number) => {
+  const handleOpenAddBlockForYear = (
+    deptCode: string,
+    yearLevelNum: number,
+    targetGradeOrTitle?: string
+  ) => {
     setEditingBlock(null);
     const targetProg =
       programs.find((p) => p.code.toUpperCase() === deptCode.toUpperCase()) || programs[0];
+    
+    const isHS =
+      targetProg?.code.toUpperCase() === 'HS' ||
+      targetProg?.name.toLowerCase().includes('high school');
+
+    const gradeMatch = targetGradeOrTitle?.match(/Grade\s*(\d+)/i);
+    const gradeNum = gradeMatch ? parseInt(gradeMatch[1], 10) : null;
+
+    let defaultSec = 'A';
+    let dbYearLevel = yearLevelNum;
+
+    if (isHS && gradeNum) {
+      defaultSec = `Grade ${gradeNum}-A`;
+      dbYearLevel = gradeNum === 11 ? 3 : gradeNum === 12 ? 4 : Math.min(Math.max(gradeNum - 6, 1), 5);
+    } else if (!isHS) {
+      defaultSec = `${yearLevelNum}A`;
+    }
+
     setBlockFormData({
       program_id: targetProg?.id || programs[0]?.id || '',
-      year_level: yearLevelNum,
-      section: 'A',
+      year_level: dbYearLevel,
+      section: defaultSec,
       student_count: 40,
     });
     setModalError(null);
@@ -391,22 +490,20 @@ export function BlocksClient({
     blocks.forEach((b) => {
       const prog = programs.find((p) => p.id === b.program_id);
       if (!prog) return;
-      const exists = list.some(
-        (c) =>
-          c.deptCode.toUpperCase() === prog.code.toUpperCase() &&
-          c.yearLevelNum === b.year_level
-      );
+      const exists = list.some((c) => doesBlockMatchYearConfig(b, c, programs));
       if (!exists) {
         const isHS =
           prog.code.toUpperCase() === 'HS' ||
           prog.name.toLowerCase().includes('high school');
+        const secMatch = (b.section || '').match(/Grade\s*(\d+)/i);
+        const autoGrade = secMatch ? parseInt(secMatch[1], 10) : b.year_level + 8;
         list.push({
-          id: `auto-${prog.code}-${b.year_level}`,
+          id: `auto-${prog.code}-${b.year_level}-${b.section}`,
           deptCode: prog.code,
           deptName: prog.name,
           yearLevelNum: b.year_level,
           title: isHS
-            ? `Grade ${b.year_level + 8} Level`
+            ? `Grade ${autoGrade} Level`
             : `${b.year_level}${
                 b.year_level === 1
                   ? 'st'
@@ -417,7 +514,7 @@ export function BlocksClient({
                   : 'th'
               } Year Level`,
           subTitle: `${prog.name} Year ${b.year_level} student blocks`,
-          targetSubjectsYearLevel: `${b.year_level} Year`,
+          targetSubjectsYearLevel: isHS ? `Grade ${autoGrade} (JHS)` : `${b.year_level} Year`,
           isHighSchool: isHS,
         });
       }
@@ -426,11 +523,26 @@ export function BlocksClient({
     return list;
   }, [yearLevelConfigs, blocks, programs]);
 
-  // Filter year levels by department
+  // Filter and naturally sort year levels by department
   const filteredYearConfigs = useMemo(() => {
-    return allYearConfigs.filter((cfg) => {
+    const list = allYearConfigs.filter((cfg) => {
       if (selectedDept === 'all') return true;
       return cfg.deptCode.toUpperCase() === selectedDept.toUpperCase();
+    });
+
+    // Natural sort: College first (1st - 4th), then High School (Grade 7 - 12)
+    return list.sort((a, b) => {
+      if (a.isHighSchool !== b.isHighSchool) {
+        return a.isHighSchool ? 1 : -1;
+      }
+      if (a.isHighSchool && b.isHighSchool) {
+        const gradeA = (a.title.match(/Grade\s*(\d+)/i) || a.targetSubjectsYearLevel.match(/Grade\s*(\d+)/i))?.[1];
+        const gradeB = (b.title.match(/Grade\s*(\d+)/i) || b.targetSubjectsYearLevel.match(/Grade\s*(\d+)/i))?.[1];
+        if (gradeA && gradeB) {
+          return parseInt(gradeA, 10) - parseInt(gradeB, 10);
+        }
+      }
+      return a.yearLevelNum - b.yearLevelNum;
     });
   }, [allYearConfigs, selectedDept]);
 
@@ -546,18 +658,11 @@ export function BlocksClient({
       <div className="bg-white rounded-4 p-4 p-md-5 shadow-sm border border-light-subtle">
         {filteredYearConfigs.map((cfg, index) => {
           // Find matching blocks for this department and year level
-          const matchingBlocks = blocks.filter((b) => {
-            const prog = programs.find((p) => p.id === b.program_id);
-            const isHS =
-              prog?.code.toUpperCase() === 'HS' ||
-              prog?.name.toLowerCase().includes('high school');
-            if (cfg.isHighSchool !== isHS) return false;
-            return b.year_level === cfg.yearLevelNum;
-          });
+          const matchingBlocks = blocks.filter((b) => doesBlockMatchYearConfig(b, cfg, programs));
 
           // Sort blocks naturally by name so (BSIT - 1A, BSIT - 1B, BSIT - 1C) appear in order
           const sortedMatchingBlocks = [...matchingBlocks].sort((a, b) => {
-            const progA = programs.find((p) => p.id === a.program_id);
+            const progA = programs.find((p) => p.id === b.program_id);
             const progB = programs.find((p) => p.id === b.program_id);
             const nameA = formatShortBlockName(
               progA?.code || cfg.deptCode,
@@ -573,7 +678,7 @@ export function BlocksClient({
           });
 
           return (
-            <div key={`${cfg.deptCode}-${cfg.yearLevelNum}`}>
+            <div key={`${cfg.deptCode}-${cfg.id || cfg.yearLevelNum}`}>
               {/* Year Level Header with Title and "View Subjects" Link */}
               <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 pb-3 mb-3">
                 <div>
@@ -614,7 +719,13 @@ export function BlocksClient({
 
                   <button
                     type="button"
-                    onClick={() => handleOpenAddBlockForYear(cfg.deptCode, cfg.yearLevelNum)}
+                    onClick={() =>
+                      handleOpenAddBlockForYear(
+                        cfg.deptCode,
+                        cfg.yearLevelNum,
+                        cfg.targetSubjectsYearLevel || cfg.title
+                      )
+                    }
                     className="btn btn-sm btn-light border rounded-pill px-3 py-1.5 text-secondary fw-semibold"
                     title={`Add block to ${cfg.title}`}
                   >
@@ -715,7 +826,13 @@ export function BlocksClient({
                   <p className="small mb-2">No blocks configured yet for {cfg.title}.</p>
                   <button
                     type="button"
-                    onClick={() => handleOpenAddBlockForYear(cfg.deptCode, cfg.yearLevelNum)}
+                    onClick={() =>
+                      handleOpenAddBlockForYear(
+                        cfg.deptCode,
+                        cfg.yearLevelNum,
+                        cfg.targetSubjectsYearLevel || cfg.title
+                      )
+                    }
                     className="btn btn-sm btn-ref-primary"
                   >
                     <i className="bi bi-plus-lg me-1" />
@@ -810,46 +927,128 @@ export function BlocksClient({
           </select>
         </div>
 
-        <div className="row g-3 mb-3">
-          <div className="col-6">
-            <label className="form-label small fw-semibold text-secondary mb-1">
-              Year Level (1 - 5)
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={5}
-              required
-              value={blockFormData.year_level}
-              onChange={(e) =>
-                setBlockFormData((prev) => ({
-                  ...prev,
-                  year_level: parseInt(e.target.value) || 1,
-                }))
-              }
-              className="form-control ref-form-control"
-            />
-          </div>
+        {(() => {
+          const selectedProg = programs.find((p) => p.id === blockFormData.program_id);
+          const isModalHS =
+            selectedProg?.code.toUpperCase() === 'HS' ||
+            selectedProg?.name.toLowerCase().includes('high school');
 
-          <div className="col-6">
-            <label className="form-label small fw-semibold text-secondary mb-1">
-              Block (e.g. 1A, 2A, A, B)
-            </label>
-            <input
-              type="text"
-              required
-              placeholder="1A"
-              value={blockFormData.section}
-              onChange={(e) =>
-                setBlockFormData((prev) => ({
-                  ...prev,
-                  section: e.target.value.toUpperCase(),
-                }))
-              }
-              className="form-control ref-form-control text-uppercase"
-            />
-          </div>
-        </div>
+          if (isModalHS) {
+            const currentSec = blockFormData.section || '';
+            const match = currentSec.match(/Grade\s*(\d+)/i);
+            const currentGrade = match
+              ? parseInt(match[1], 10)
+              : blockFormData.year_level === 3
+              ? 11
+              : blockFormData.year_level === 4
+              ? 12
+              : 7;
+
+            return (
+              <div className="row g-3 mb-3">
+                <div className="col-6">
+                  <label className="form-label small fw-semibold text-secondary mb-1">
+                    Grade Level
+                  </label>
+                  <select
+                    value={currentGrade}
+                    onChange={(e) => {
+                      const grade = parseInt(e.target.value, 10);
+                      const dbYr =
+                        grade === 11
+                          ? 3
+                          : grade === 12
+                          ? 4
+                          : Math.min(Math.max(grade - 6, 1), 5);
+                      const secSuffix =
+                        currentSec.replace(/^Grade\s*\d+[-_\s]*/i, '') || 'A';
+                      setBlockFormData((prev) => ({
+                        ...prev,
+                        year_level: dbYr,
+                        section: `Grade ${grade}-${secSuffix}`.toUpperCase(),
+                      }));
+                    }}
+                    className="form-select ref-form-control"
+                  >
+                    <option value={7}>Grade 7 (JHS)</option>
+                    <option value={8}>Grade 8 (JHS)</option>
+                    <option value={9}>Grade 9 (JHS)</option>
+                    <option value={10}>Grade 10 (JHS)</option>
+                    <option value={11}>Grade 11 (SHS)</option>
+                    <option value={12}>Grade 12 (SHS)</option>
+                  </select>
+                </div>
+
+                <div className="col-6">
+                  <label className="form-label small fw-semibold text-secondary mb-1">
+                    Section Name / Track
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Grade 7-A, Grade 11-STEM"
+                    value={blockFormData.section}
+                    onChange={(e) =>
+                      setBlockFormData((prev) => ({
+                        ...prev,
+                        section: e.target.value.toUpperCase(),
+                      }))
+                    }
+                    className="form-control ref-form-control text-uppercase"
+                  />
+                  <div className="form-text small text-muted" style={{ fontSize: '0.72rem' }}>
+                    Include grade number (e.g. Grade 7-A, Grade 11-STEM)
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div className="row g-3 mb-3">
+              <div className="col-6">
+                <label className="form-label small fw-semibold text-secondary mb-1">
+                  Year Level (1 - 5)
+                </label>
+                <select
+                  value={blockFormData.year_level}
+                  onChange={(e) =>
+                    setBlockFormData((prev) => ({
+                      ...prev,
+                      year_level: parseInt(e.target.value, 10) || 1,
+                    }))
+                  }
+                  className="form-select ref-form-control"
+                >
+                  <option value={1}>1st Year Level</option>
+                  <option value={2}>2nd Year Level</option>
+                  <option value={3}>3rd Year Level</option>
+                  <option value={4}>4th Year Level</option>
+                  <option value={5}>5th Year Level</option>
+                </select>
+              </div>
+
+              <div className="col-6">
+                <label className="form-label small fw-semibold text-secondary mb-1">
+                  Block (e.g. 1A, 2A, A, B)
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="1A"
+                  value={blockFormData.section}
+                  onChange={(e) =>
+                    setBlockFormData((prev) => ({
+                      ...prev,
+                      section: e.target.value.toUpperCase(),
+                    }))
+                  }
+                  className="form-control ref-form-control text-uppercase"
+                />
+              </div>
+            </div>
+          );
+        })()}
       </FormModal>
 
       {/* Create Year Level Modal */}

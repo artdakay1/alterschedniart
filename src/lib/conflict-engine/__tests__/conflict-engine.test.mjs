@@ -9,7 +9,6 @@ import {
   timeRangesOverlap,
   timeToMinutes,
   isTimeRangeWithin,
-  MAX_DAILY_HOURS,
 } from '../index.ts';
 
 // Reusable mock context for testing
@@ -23,6 +22,8 @@ const mockSubjects = [
   { id: 'sub-lec-only', code: 'GE101', title: 'Understanding the Self', requiresLab: false, lectureHours: 3, labHours: 0 },
   { id: 'sub-with-lab', code: 'IT111', title: 'Intro to Computing', requiresLab: true, lectureHours: 2, labHours: 3 },
   { id: 'sub-prog-1', code: 'IT112', title: 'Programming 1', requiresLab: true, lectureHours: 2, labHours: 3 },
+  { id: 'sub-pe-2unit', code: 'PE101', title: 'Physical Education 1', units: 2, requiresLab: false, lectureHours: 2, labHours: 0 },
+  { id: 'sub-nstp-1unit', code: 'NSTP1', title: 'National Service Training Program 1', units: 1, requiresLab: false, lectureHours: 1, labHours: 0 },
 ];
 
 const mockInstructors = [
@@ -30,20 +31,24 @@ const mockInstructors = [
     id: 'inst-qualified',
     name: 'Prof. Qualified',
     needsLabEquipment: true,
-    qualifications: ['sub-lec-only', 'sub-with-lab'],
+    qualifications: ['sub-lec-only', 'sub-with-lab', 'sub-pe-2unit', 'sub-nstp-1unit'],
     availability: [
       { dayOfWeek: 1, startTime: '08:00:00', endTime: '18:00:00' }, // Monday
+      { dayOfWeek: 2, startTime: '08:00:00', endTime: '18:00:00' }, // Tuesday
       { dayOfWeek: 3, startTime: '08:00:00', endTime: '18:00:00' }, // Wednesday
+      { dayOfWeek: 5, startTime: '08:00:00', endTime: '18:00:00' }, // Friday
+      { dayOfWeek: 6, startTime: '08:00:00', endTime: '18:00:00' }, // Saturday
     ],
   },
   {
     id: 'inst-no-equipment',
     name: 'Prof. Standard',
     needsLabEquipment: false,
-    qualifications: ['sub-lec-only'],
+    qualifications: ['sub-lec-only', 'sub-pe-2unit', 'sub-nstp-1unit'],
     availability: [
       { dayOfWeek: 1, startTime: '08:00:00', endTime: '17:00:00' },
       { dayOfWeek: 2, startTime: '08:00:00', endTime: '17:00:00' },
+      { dayOfWeek: 6, startTime: '08:00:00', endTime: '17:00:00' },
     ],
   },
 ];
@@ -381,10 +386,10 @@ describe('AlterSched Conflict Engine Unit Tests', () => {
   });
 
   // -------------------------------------------------------------
-  // HARD RULE 5: CAPACITY EXCEEDED
+  // HARD RULE: CAPACITY EXCEEDED (REMOVED)
   // -------------------------------------------------------------
-  describe('Hard Rule: capacity_exceeded', () => {
-    it('detects when block student count exceeds room capacity', () => {
+  describe('Rule: capacity_exceeded (removed)', () => {
+    it('does NOT flag a violation when block student count exceeds room capacity', () => {
       // block-1 has 40 students; room-lec-small holds 30
       const entries = [
         {
@@ -395,16 +400,15 @@ describe('AlterSched Conflict Engine Unit Tests', () => {
           instructorId: 'inst-qualified',
           roomId: 'room-lec-small', // 30 capacity
           dayOfWeek: 1,
-          startTime: '09:00',
-          endTime: '12:00',
+          startTime: '09:30',
+          endTime: '11:00',
           sessionType: 'lecture',
         },
       ];
 
       const violations = checkSchedule(entries, baseContext);
       const cap = violations.find((v) => v.rule === 'capacity_exceeded');
-      assert.ok(cap, 'Expected capacity_exceeded violation');
-      assert.strictEqual(cap.severity, 'hard');
+      assert.strictEqual(cap, undefined, 'capacity_exceeded should not be flagged');
     });
   });
 
@@ -505,13 +509,10 @@ describe('AlterSched Conflict Engine Unit Tests', () => {
   });
 
   // -------------------------------------------------------------
-  // SOFT RULE 1: LAB ROOM UNDERUSED
+  // RULE REMOVAL VERIFICATION: LAB ROOM UNDERUSED
   // -------------------------------------------------------------
-  describe('Soft Rule: lab_room_underused', () => {
-    it('flags an informational warning (severity soft) when a non-lab class uses a lab room with a no-equipment instructor', () => {
-      // sub-lec-only: requiresLab = false
-      // room-lab-1: roomType = 'laboratory'
-      // inst-no-equipment: needsLabEquipment = false
+  describe('Rule Removal: lab_room_underused is removed', () => {
+    it('does NOT flag lab_room_underused when a non-lab class uses a lab room', () => {
       const entries = [
         {
           id: 'e1',
@@ -521,78 +522,20 @@ describe('AlterSched Conflict Engine Unit Tests', () => {
           instructorId: 'inst-no-equipment',
           roomId: 'room-lab-1', // Lab room
           dayOfWeek: 1,
-          startTime: '09:00',
-          endTime: '12:00',
-          sessionType: 'lecture',
-        },
-      ];
-
-      const violations = checkSchedule(entries, baseContext);
-      const softWarn = violations.find((v) => v.rule === 'lab_room_underused');
-      assert.ok(softWarn, 'Expected lab_room_underused advisory');
-      assert.strictEqual(softWarn.severity, 'soft', 'Must be a soft advisory, NOT a hard block');
-
-      // Crucial requirement: No hard block must be generated for this!
-      const hardBlock = violations.find(
-        (v) => v.rule === 'lab_room_underused' && v.severity === 'hard'
-      );
-      assert.strictEqual(hardBlock, undefined, 'Must NOT be a hard error');
-    });
-
-    it('does NOT flag lab_room_underused when instructor DOES need lab equipment', () => {
-      // inst-qualified has needsLabEquipment = true!
-      const entries = [
-        {
-          id: 'e1',
-          offeringId: 'off-1',
-          blockId: 'block-1',
-          subjectId: 'sub-lec-only',
-          instructorId: 'inst-qualified', // needsLabEquipment = true
-          roomId: 'room-lab-1',
-          dayOfWeek: 1,
-          startTime: '09:00',
-          endTime: '12:00',
+          startTime: '08:00',
+          endTime: '11:00',
           sessionType: 'lecture',
         },
       ];
 
       const violations = checkSchedule(entries, baseContext);
       const underused = violations.find((v) => v.rule === 'lab_room_underused');
-      assert.strictEqual(
-        underused,
-        undefined,
-        'lab_room_underused must NOT fire when instructor needs lab equipment'
-      );
-    });
-
-    it('does NOT flag lab_room_underused when room is a lecture room', () => {
-      const entries = [
-        {
-          id: 'e1',
-          offeringId: 'off-1',
-          blockId: 'block-1',
-          subjectId: 'sub-lec-only',
-          instructorId: 'inst-no-equipment',
-          roomId: 'room-lec-1', // Lecture room
-          dayOfWeek: 1,
-          startTime: '09:00',
-          endTime: '12:00',
-          sessionType: 'lecture',
-        },
-      ];
-
-      const violations = checkSchedule(entries, baseContext);
-      const underused = violations.find((v) => v.rule === 'lab_room_underused');
-      assert.strictEqual(
-        underused,
-        undefined,
-        'lab_room_underused must NOT fire for lecture rooms'
-      );
+      assert.strictEqual(underused, undefined, 'lab_room_underused must NOT trigger as it is removed');
     });
   });
 
   // -------------------------------------------------------------
-  // SOFT RULE 2: UNQUALIFIED INSTRUCTOR
+  // SOFT RULE: UNQUALIFIED INSTRUCTOR
   // -------------------------------------------------------------
   describe('Soft Rule: unqualified_instructor', () => {
     it('flags a soft advisory when instructor is not officially qualified for the course', () => {
@@ -620,11 +563,10 @@ describe('AlterSched Conflict Engine Unit Tests', () => {
   });
 
   // -------------------------------------------------------------
-  // SOFT RULE 3: HEAVY LOAD DAY
+  // RULE REMOVAL VERIFICATION: HEAVY LOAD DAY
   // -------------------------------------------------------------
-  describe('Soft Rule: heavy_load_day', () => {
-    it('flags a soft warning when instructor teaching load exceeds MAX_DAILY_HOURS (6 hours)', () => {
-      // Schedule inst-qualified for 7 hours on Monday: 09:00-12:00 (3h) and 13:00-17:00 (4h) = 7h
+  describe('Rule Removal: heavy_load_day is removed', () => {
+    it('does NOT flag heavy_load_day when instructor teaching load exceeds 6 hours', () => {
       const entries = [
         {
           id: 'e1',
@@ -634,8 +576,8 @@ describe('AlterSched Conflict Engine Unit Tests', () => {
           instructorId: 'inst-qualified',
           roomId: 'room-lec-1',
           dayOfWeek: 1,
-          startTime: '09:00',
-          endTime: '12:00', // 3h
+          startTime: '08:00',
+          endTime: '11:00', // 3h
           sessionType: 'lecture',
         },
         {
@@ -647,15 +589,14 @@ describe('AlterSched Conflict Engine Unit Tests', () => {
           roomId: 'room-lab-1',
           dayOfWeek: 1,
           startTime: '13:00',
-          endTime: '17:00', // 4h
+          endTime: '17:30', // 4.5h -> 7.5h total
           sessionType: 'lab',
         },
       ];
 
       const violations = checkSchedule(entries, baseContext);
       const heavy = violations.find((v) => v.rule === 'heavy_load_day');
-      assert.ok(heavy, 'Expected heavy_load_day advisory');
-      assert.strictEqual(heavy.severity, 'soft');
+      assert.strictEqual(heavy, undefined, 'heavy_load_day must NOT trigger as it is removed');
     });
   });
 
@@ -802,6 +743,106 @@ describe('AlterSched Conflict Engine Unit Tests', () => {
       assert.ok(violations[0].message.includes('10:00'));
     });
 
+    it('accepts 2-unit subjects scheduled for 2 hours (10:00-12:00) on Saturday without invalid_time_slot', () => {
+      const peSat = [
+        {
+          id: 'e-sat-pe-1000',
+          offeringId: 'off-pe',
+          blockId: 'block-1',
+          subjectId: 'sub-pe-2unit',
+          instructorId: 'inst-qualified',
+          roomId: 'room-lec-1',
+          dayOfWeek: 6, // Saturday
+          startTime: '10:00',
+          endTime: '12:00', // 2 hours
+          sessionType: 'lecture',
+        },
+      ];
+      const violations = checkSchedule(peSat, baseContext).filter((v) => v.rule === 'invalid_time_slot');
+      assert.strictEqual(violations.length, 0, '2-unit subject 10:00-12:00 on Saturday must be valid');
+    });
+
+    it('accepts 2-unit subjects scheduled for 2 hours (10:00-12:00 or 13:00-15:00) on weekdays without invalid_time_slot', () => {
+      const peWeekday = [
+        {
+          id: 'e-tue-pe-1000',
+          offeringId: 'off-pe-tue',
+          blockId: 'block-1',
+          subjectId: 'sub-pe-2unit',
+          instructorId: 'inst-qualified',
+          roomId: 'room-lec-1',
+          dayOfWeek: 2, // Tuesday
+          startTime: '10:00',
+          endTime: '12:00',
+          sessionType: 'lecture',
+        },
+        {
+          id: 'e-fri-pe-1300',
+          offeringId: 'off-pe-fri',
+          blockId: 'block-2',
+          subjectId: 'sub-pe-2unit',
+          instructorId: 'inst-qualified',
+          roomId: 'room-lec-small',
+          dayOfWeek: 5, // Friday
+          startTime: '13:00',
+          endTime: '15:00',
+          sessionType: 'lecture',
+        },
+      ];
+      const violations = checkSchedule(peWeekday, baseContext).filter((v) => v.rule === 'invalid_time_slot');
+      assert.strictEqual(violations.length, 0, '2-unit subjects on weekdays must not be blocked by invalid_time_slot');
+    });
+
+    it('accepts 2-unit subjects scheduled for 2 hours (08:00-10:00) on Monday without invalid_time_slot', () => {
+      const peMon = [
+        {
+          id: 'e-mon-pe-0800',
+          offeringId: 'off-pe-mon',
+          blockId: 'block-1',
+          subjectId: 'sub-pe-2unit',
+          instructorId: 'inst-qualified',
+          roomId: 'room-lec-1',
+          dayOfWeek: 1, // Monday
+          startTime: '08:00',
+          endTime: '10:00', // 2 hours
+          sessionType: 'lecture',
+        },
+      ];
+      const violations = checkSchedule(peMon, baseContext).filter((v) => v.rule === 'invalid_time_slot');
+      assert.strictEqual(violations.length, 0, '2-unit subject 08:00-10:00 on Monday must be valid');
+    });
+
+    it('accepts 1-unit subjects scheduled for 1 hour (08:00-09:00 or 10:00-11:00) on any weekday without invalid_time_slot', () => {
+      const nstpMon = [
+        {
+          id: 'e-mon-nstp-0800',
+          offeringId: 'off-nstp-mon',
+          blockId: 'block-1',
+          subjectId: 'sub-nstp-1unit',
+          instructorId: 'inst-qualified',
+          roomId: 'room-lec-1',
+          dayOfWeek: 1, // Monday
+          startTime: '08:00',
+          endTime: '09:00', // 1 hour
+          sessionType: 'lecture',
+        },
+        {
+          id: 'e-sat-nstp-1000',
+          offeringId: 'off-nstp-sat',
+          blockId: 'block-2',
+          subjectId: 'sub-nstp-1unit',
+          instructorId: 'inst-qualified',
+          roomId: 'room-lec-small',
+          dayOfWeek: 6, // Saturday
+          startTime: '10:00',
+          endTime: '11:00', // 1 hour
+          sessionType: 'lecture',
+        },
+      ];
+      const violations = checkSchedule(nstpMon, baseContext).filter((v) => v.rule === 'invalid_time_slot');
+      assert.strictEqual(violations.length, 0, '1-unit subject 1-hour sessions must be valid on Monday and Saturday');
+    });
+
     it('rejects Sunday sessions as outside the canonical timetable grid', () => {
       const entries = [
         {
@@ -912,6 +953,68 @@ describe('AlterSched Conflict Engine Unit Tests', () => {
       const violations = checkSchedule(entries, baseContext);
       const lunchViolation = violations.find((v) => v.rule === 'spans_lunch_break');
       assert.ok(lunchViolation, '11:00-14:00 must be flagged as spans_lunch_break');
+    });
+
+    it('enforces High School lunch break strictly at 12:00-13:00', () => {
+      const hsContext = {
+        ...baseContext,
+        blocks: [
+          { id: 'block-hs-1', name: 'Grade 10 - St. Luke', studentCount: 35 },
+        ],
+        subjects: [
+          { id: 'sub-hs-1', code: 'HS-MATH10', title: 'Mathematics 10', lectureHours: 3, labHours: 0, requiresLab: false },
+        ],
+      };
+
+      // Valid HS entries before and after lunch
+      const validEntries = [
+        {
+          id: 'e-hs-am',
+          offeringId: 'off-hs-1',
+          blockId: 'block-hs-1',
+          subjectId: 'sub-hs-1',
+          instructorId: 'inst-qualified',
+          roomId: 'room-lec-1',
+          dayOfWeek: 1,
+          startTime: '10:30',
+          endTime: '12:00', // Ends at 12:00 (lunch start)
+          sessionType: 'lecture',
+        },
+        {
+          id: 'e-hs-pm',
+          offeringId: 'off-hs-1',
+          blockId: 'block-hs-1',
+          subjectId: 'sub-hs-1',
+          instructorId: 'inst-qualified',
+          roomId: 'room-lec-1',
+          dayOfWeek: 1,
+          startTime: '13:00', // Starts at 13:00 (lunch end)
+          endTime: '14:30',
+          sessionType: 'lecture',
+        },
+      ];
+      const validViolations = checkSchedule(validEntries, hsContext);
+      const lunchViolationsValid = validViolations.filter((v) => v.rule === 'spans_lunch_break');
+      assert.strictEqual(lunchViolationsValid.length, 0, 'HS classes touching 12:00 and 13:00 boundaries must be valid');
+
+      // Invalid HS entry crossing 12:00-13:00 lunch break
+      const crossingEntries = [
+        {
+          id: 'e-hs-cross',
+          offeringId: 'off-hs-1',
+          blockId: 'block-hs-1',
+          subjectId: 'sub-hs-1',
+          instructorId: 'inst-qualified',
+          roomId: 'room-lec-1',
+          dayOfWeek: 1,
+          startTime: '11:30',
+          endTime: '12:30', // Crosses into 12:00-13:00 HS lunch
+          sessionType: 'lecture',
+        },
+      ];
+      const crossingViolations = checkSchedule(crossingEntries, hsContext);
+      const lunchViolationCross = crossingViolations.find((v) => v.rule === 'spans_lunch_break');
+      assert.ok(lunchViolationCross, 'HS class from 11:30-12:30 must be flagged for High School lunch break');
     });
   });
 

@@ -9,6 +9,8 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
+export type DepartmentType = 'BSIT' | 'High School';
+export type InstructorDepartmentType = 'BSIT' | 'High School' | 'Both';
 export type UserRole = 'admin' | 'scheduler' | 'instructor';
 export type UserStatus = 'pending' | 'active' | 'rejected' | 'disabled';
 export type RoomType = 'lecture' | 'laboratory';
@@ -28,6 +30,8 @@ export interface Database {
           email: string;
           role: UserRole;
           status: UserStatus;
+          department?: DepartmentType | null;
+          allowed_subjects?: string[] | null;
           created_at: string;
           updated_at: string;
         };
@@ -37,6 +41,8 @@ export interface Database {
           email: string;
           role?: UserRole;
           status?: UserStatus;
+          department?: DepartmentType | null;
+          allowed_subjects?: string[] | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -46,6 +52,8 @@ export interface Database {
           email?: string;
           role?: UserRole;
           status?: UserStatus;
+          department?: DepartmentType | null;
+          allowed_subjects?: string[] | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -185,6 +193,7 @@ export interface Database {
           room_type: RoomType;
           capacity: number;
           is_shared: boolean;
+          allowed_departments?: DepartmentType[];
           created_at: string;
           updated_at: string;
         };
@@ -194,6 +203,7 @@ export interface Database {
           room_type: RoomType;
           capacity: number;
           is_shared?: boolean;
+          allowed_departments?: DepartmentType[];
           created_at?: string;
           updated_at?: string;
         };
@@ -203,6 +213,7 @@ export interface Database {
           room_type?: RoomType;
           capacity?: number;
           is_shared?: boolean;
+          allowed_departments?: DepartmentType[];
           created_at?: string;
           updated_at?: string;
         };
@@ -215,6 +226,7 @@ export interface Database {
           full_name: string;
           employment_type: EmploymentType;
           needs_lab_equipment: boolean;
+          department?: InstructorDepartmentType | null;
           created_at: string;
           updated_at: string;
         };
@@ -224,6 +236,7 @@ export interface Database {
           full_name: string;
           employment_type: EmploymentType;
           needs_lab_equipment?: boolean;
+          department?: InstructorDepartmentType | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -233,6 +246,7 @@ export interface Database {
           full_name?: string;
           employment_type?: EmploymentType;
           needs_lab_equipment?: boolean;
+          department?: InstructorDepartmentType | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -413,7 +427,8 @@ export interface Database {
           start_time: string;
           end_time: string;
           session_type: SessionType;
-          notes: string | null;
+          created_by_ai?: boolean | null;
+          notes?: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -427,6 +442,7 @@ export interface Database {
           start_time: string;
           end_time: string;
           session_type: SessionType;
+          created_by_ai?: boolean | null;
           notes?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -441,6 +457,7 @@ export interface Database {
           start_time?: string;
           end_time?: string;
           session_type?: SessionType;
+          created_by_ai?: boolean | null;
           notes?: string | null;
           created_at?: string;
           updated_at?: string;
@@ -702,6 +719,40 @@ export interface Database {
           }
         ];
       };
+      scheduler_allowed_subjects: {
+        Row: {
+          id: string;
+          profile_id: string;
+          subject_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          profile_id: string;
+          subject_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          profile_id?: string;
+          subject_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'scheduler_allowed_subjects_profile_id_fkey';
+            columns: ['profile_id'];
+            referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'scheduler_allowed_subjects_subject_id_fkey';
+            columns: ['subject_id'];
+            referencedRelation: 'subjects';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -732,19 +783,25 @@ export type InsertTables<T extends keyof Database['public']['Tables']> =
 export type UpdateTables<T extends keyof Database['public']['Tables']> =
   Database['public']['Tables'][T]['Update'];
 
-export type Profile = Tables<'profiles'>;
+export type Profile = Tables<'profiles'> & {
+  department?: DepartmentType | null;
+  allowed_subjects?: string[] | null;
+  allowed_subject_ids?: string[] | null;
+};
 export type AcademicTerm = Tables<'academic_terms'>;
 export type Program = Tables<'programs'>;
 export type Block = Tables<'blocks'>;
 export type Subject = Tables<'subjects'>;
-export type Room = Tables<'rooms'>;
+export type Room = Tables<'rooms'> & {
+  allowed_departments?: DepartmentType[];
+};
 export type Instructor = Tables<'instructors'>;
 export type InstructorQualification = Tables<'instructor_qualifications'>;
 export type InstructorAvailability = Tables<'instructor_availability'>;
 export type ClassOffering = Tables<'class_offerings'>;
 export type ScheduleVersion = Tables<'schedule_versions'>;
 export type ScheduleEntry = Tables<'schedule_entries'> & {
-  created_by_ai?: boolean;
+  created_by_ai?: boolean | null;
 };
 export type FixedConstraint = Tables<'fixed_constraints'>;
 export type AlterationRequest = Tables<'alteration_requests'> & {
@@ -766,3 +823,4 @@ export type AiGenerationLog = {
   created_by: string | null;
   created_at: string;
 };
+

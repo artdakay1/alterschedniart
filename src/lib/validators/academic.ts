@@ -42,8 +42,8 @@ export const blockSchema = z.object({
   section: z
     .string()
     .trim()
-    .min(1, 'Block is required')
-    .max(10, 'Block cannot exceed 10 characters'),
+    .min(1, 'Block / Section is required')
+    .max(30, 'Block / Section cannot exceed 30 characters'),
   student_count: z.coerce
     .number()
     .int()
@@ -101,6 +101,10 @@ export const roomSchema = z.object({
     .int()
     .positive('Capacity must be greater than 0'),
   is_shared: z.boolean().default(false),
+  allowed_departments: z
+    .array(z.enum(['BSIT', 'High School']))
+    .min(1, 'Select at least one department allowed to use this room.')
+    .default(['BSIT']),
 });
 
 export type RoomInput = z.infer<typeof roomSchema>;
@@ -108,6 +112,7 @@ export type RoomInput = z.infer<typeof roomSchema>;
 export const instructorProfileSchema = z.object({
   employment_type: z.enum(['full_time', 'part_time']),
   needs_lab_equipment: z.boolean().default(false),
+  department: z.enum(['BSIT', 'High School', 'Both']).default('BSIT'),
 });
 
 export type InstructorProfileInput = z.infer<typeof instructorProfileSchema>;

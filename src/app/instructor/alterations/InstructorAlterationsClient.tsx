@@ -647,7 +647,7 @@ export function InstructorAlterationsClient({
                       rows={3}
                       value={reason}
                       onChange={(e) => setReason(e.target.value)}
-                      placeholder="Provide an explanation for the scheduler (e.g., room capacity inadequate for student roster, departmental schedule adjustment, medical leave replacement...)"
+                      placeholder="Provide an explanation for the scheduler (e.g., room change needed, departmental schedule adjustment, medical leave replacement...)"
                       className="form-control ref-form-control"
                     />
                   </div>

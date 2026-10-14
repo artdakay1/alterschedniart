@@ -14,7 +14,7 @@ export * from './types.ts';
 export * from './utils.ts';
 export * from './time-slots.ts';
 export { checkHardRules } from './rules/hard-rules.ts';
-export { checkSoftRules, MAX_DAILY_HOURS } from './rules/soft-rules.ts';
+export { checkSoftRules } from './rules/soft-rules.ts';
 
 /**
  * Runs the deterministic conflict engine against a candidate set of schedule entries.

@@ -84,7 +84,7 @@ export async function notifyInstructorsOnPublish(
     // Distinct subjects
     const subjectSet = new Set<string>();
     for (const e of instEntries) {
-      const sub = (e.class_offerings as any)?.subjects;
+      const sub = (e.class_offerings as unknown as { subjects?: { code?: string } } | null)?.subjects;
       if (sub?.code) subjectSet.add(sub.code);
     }
     const subjectsList = Array.from(subjectSet).join(', ');
@@ -112,13 +112,13 @@ export async function notifyInstructorsOnPublish(
         } else {
           console.error(`Failed to insert notification for instructor ${inst.id}:`, notifErr.message);
         }
-      } catch (err: any) {
-        console.error('Error inserting in-app notification:', err.message);
+      } catch (err: unknown) {
+        console.error('Error inserting in-app notification:', err instanceof Error ? err.message : String(err));
       }
     }
 
     // B. Email notification
-    const instructorEmail = (inst as any).profiles?.email;
+    const instructorEmail = (inst as unknown as { profiles?: { email?: string } | null }).profiles?.email;
     if (instructorEmail) {
       try {
         await sendEmailNotification({
@@ -128,8 +128,8 @@ export async function notifyInstructorsOnPublish(
           textBody: `Hello ${inst.full_name},\n\n${summaryText}\n\nLog in to your AlterSched Instructor Portal to view your complete timetable.\n\nThank you,\nAlterSched Academic Scheduling Team`,
         });
         emailCount++;
-      } catch (emailErr: any) {
-        console.error(`Failed to send email to ${instructorEmail}:`, emailErr.message);
+      } catch (emailErr: unknown) {
+        console.error(`Failed to send email to ${instructorEmail}:`, emailErr instanceof Error ? emailErr.message : String(emailErr));
       }
     }
   }
