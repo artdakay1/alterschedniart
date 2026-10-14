@@ -213,6 +213,7 @@ export function checkHardRules(
   // 6. DUPLICATE SUBJECT IN BLOCK: Same subject assigned to same block across multiple offerings
   const blockSubjectOfferings = new Map<string, { offeringIds: Set<string>; entryIds: string[] }>();
   for (const entry of entries) {
+    if (!entry.blockId || !entry.subjectId) continue;
     const key = `${entry.blockId}:${entry.subjectId}`;
     const record = blockSubjectOfferings.get(key) || {
       offeringIds: new Set<string>(),

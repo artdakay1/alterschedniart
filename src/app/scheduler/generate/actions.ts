@@ -1,6 +1,8 @@
 // src/app/scheduler/generate/actions.ts
 'use server';
 
+export const maxDuration = 60;
+
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import {
@@ -119,8 +121,7 @@ export async function generateAiDraftAction(
     supabase
       .from('class_offerings')
       .select('*, subjects(*)')
-      .eq('term_id', termId)
-      .in('block_id', targetBlockIds),
+      .eq('term_id', termId),
     supabase.from('rooms').select('*').order('name', { ascending: true }),
     supabase
       .from('instructors')

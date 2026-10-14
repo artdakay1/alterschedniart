@@ -1,6 +1,8 @@
 // src/app/scheduler/schedule/actions.ts
 'use server';
 
+export const maxDuration = 60;
+
 import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
