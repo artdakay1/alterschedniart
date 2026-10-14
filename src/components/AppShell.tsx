@@ -1,18 +1,21 @@
 // src/components/AppShell.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { LogoutButton } from '@/components/LogoutButton';
 import { NotificationBell, type AppNotification } from '@/components/NotificationBell';
+import { createClient } from '@/lib/supabase/client';
 import type { UserRole } from '@/types/database';
 
 export interface NavLinkItem {
   label: string;
   href: string;
   icon?: string;
+  badgeCount?: number;
+  hasNotification?: boolean;
 }
 
 interface AppShellProps {
@@ -33,8 +36,42 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [searchVal, setSearchVal] = useState('');
+
+  // Real-time automatic synchronization: listen to database changes and auto-refresh without manual reload
+  useEffect(() => {
+    let supabase: ReturnType<typeof createClient>;
+    try {
+      supabase = createClient();
+    } catch {
+      return;
+    }
+
+    const channel = supabase
+      .channel('altersched-realtime-global')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_entries' }, () => {
+        router.refresh();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_versions' }, () => {
+        router.refresh();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'alteration_requests' }, () => {
+        router.refresh();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
+        router.refresh();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
+        router.refresh();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [router]);
 
   // Generate initials for avatar
   const initials = userName
@@ -59,7 +96,8 @@ export function AppShell({
     'QR Sheets': 'bi-qr-code',
     Users: 'bi-person-gear',
     'Schedule Editor': 'bi-calendar3',
-    'AI Generator': 'bi-cpu',
+    'Schedule Generator': 'bi-cpu',
+    'Published & Saved': 'bi-table',
     'My Availability': 'bi-clock-history',
   };
 
@@ -142,7 +180,21 @@ export function AppShell({
                   className={`sidebar-nav-link ${isActive ? 'active' : ''}`}
                 >
                   <i className={`bi ${iconClass}`} />
-                  <span>{link.label}</span>
+                  <span className="flex-grow-1 text-truncate">{link.label}</span>
+                  {link.badgeCount && link.badgeCount > 0 ? (
+                    <span
+                      className="badge rounded-pill bg-danger text-white ms-auto shadow-sm"
+                      style={{ fontSize: '0.65rem', padding: '0.22em 0.55em' }}
+                    >
+                      {link.badgeCount > 99 ? '99+' : link.badgeCount}
+                    </span>
+                  ) : link.hasNotification ? (
+                    <span
+                      className="p-1 bg-danger border border-white rounded-circle ms-auto shadow-sm"
+                      style={{ width: '8px', height: '8px', minWidth: '8px', display: 'inline-block' }}
+                      title="New updates"
+                    />
+                  ) : null}
                 </Link>
               );
             })}

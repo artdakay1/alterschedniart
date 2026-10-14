@@ -42,30 +42,59 @@ export default async function SchedulerLayout({
     .order('created_at', { ascending: false })
     .limit(20);
 
+  // Fetch pending notification indicators for sidebars
+  const [
+    { count: pendingAlterationsCount },
+    { count: pendingUsersCount },
+    { count: draftVersionsCount },
+    { data: instructorsWithoutQuals },
+  ] = await Promise.all([
+    supabase
+      .from('alteration_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending'),
+    supabase
+      .from('profiles')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending'),
+    supabase
+      .from('schedule_versions')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'draft'),
+    supabase
+      .from('instructors')
+      .select('id, instructor_qualifications(id)')
+      .limit(50),
+  ]);
+
+  const hasInstructorAttention = (instructorsWithoutQuals || []).some(
+    (i: any) => !i.instructor_qualifications || i.instructor_qualifications.length === 0
+  );
+
   const navLinks =
     userProfile.role === 'admin'
       ? [
           { label: 'Dashboard', href: '/admin', icon: 'bi-grid-fill' },
-          { label: 'Schedule Editor', href: '/scheduler/schedule', icon: 'bi-calendar3' },
+          { label: 'Schedule Editor', href: '/scheduler/schedule', icon: 'bi-calendar3', hasNotification: (draftVersionsCount || 0) > 0 },
           { label: 'Schedule Generator', href: '/scheduler/generate', icon: 'bi-cpu' },
-          { label: 'Published & Saved', href: '/scheduler/schedules', icon: 'bi-table' },
+          { label: 'Published & Saved', href: '/scheduler/schedules', icon: 'bi-table', badgeCount: draftVersionsCount || 0 },
           { label: 'Terms', href: '/admin/terms', icon: 'bi-calendar-range' },
           { label: 'Programs & Blocks', href: '/admin/blocks', icon: 'bi-mortarboard' },
           { label: 'Subjects', href: '/admin/subjects', icon: 'bi-book' },
           { label: 'Rooms', href: '/admin/rooms', icon: 'bi-building' },
-          { label: 'Instructors', href: '/admin/instructors', icon: 'bi-people' },
+          { label: 'Instructors', href: '/admin/instructors', icon: 'bi-people', hasNotification: hasInstructorAttention },
           { label: 'Constraints', href: '/admin/constraints', icon: 'bi-shield-check' },
-          { label: 'Alterations', href: '/admin/alterations', icon: 'bi-arrow-left-right' },
-          { label: 'QR Sheets', href: '/admin/qr-sheets', icon: 'bi-qr-code' },
-          { label: 'Users', href: '/admin/users', icon: 'bi-person-gear' },
+          { label: 'Alterations', href: '/admin/alterations', icon: 'bi-arrow-left-right', badgeCount: pendingAlterationsCount || 0 },
+          { label: 'QR Sheets', href: '/admin/qr-sheets', icon: 'bi-qr-code', hasNotification: (draftVersionsCount || 0) > 0 },
+          { label: 'Users', href: '/admin/users', icon: 'bi-person-gear', badgeCount: pendingUsersCount || 0 },
         ]
       : [
           { label: 'Dashboard', href: '/scheduler', icon: 'bi-grid-fill' },
-          { label: 'Schedule Editor', href: '/scheduler/schedule', icon: 'bi-calendar3' },
-          { label: 'Published & Saved', href: '/scheduler/schedules', icon: 'bi-table' },
+          { label: 'Schedule Editor', href: '/scheduler/schedule', icon: 'bi-calendar3', hasNotification: (draftVersionsCount || 0) > 0 },
+          { label: 'Published & Saved', href: '/scheduler/schedules', icon: 'bi-table', badgeCount: draftVersionsCount || 0 },
           { label: 'Subjects', href: '/scheduler/subjects', icon: 'bi-book' },
-          { label: 'Alterations', href: '/scheduler/alterations', icon: 'bi-arrow-left-right' },
-          { label: 'QR Sheets', href: '/scheduler/qr-sheets', icon: 'bi-qr-code' },
+          { label: 'Alterations', href: '/scheduler/alterations', icon: 'bi-arrow-left-right', badgeCount: pendingAlterationsCount || 0 },
+          { label: 'QR Sheets', href: '/scheduler/qr-sheets', icon: 'bi-qr-code', hasNotification: (draftVersionsCount || 0) > 0 },
           { label: 'Schedule Generator', href: '/scheduler/generate', icon: 'bi-cpu' },
           { label: 'Fixed Constraints', href: '/scheduler/constraints', icon: 'bi-lock' },
         ];

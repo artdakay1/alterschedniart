@@ -12,6 +12,10 @@ import {
   generateDraftWithGemini,
   generateHeuristicDraft,
 } from './gemini-client.ts';
+import {
+  parseRefineInstruction,
+  solveDeterministicRefine,
+} from './hybrid-refine-solver.ts';
 import type {
   BlockDraftPayload,
   BlockDraftResult,
@@ -168,9 +172,58 @@ export async function executeBlockDraft(
     };
   } else {
     // -------------------------------------------------------------
-    // AI ADJUSTMENT MODE (Gemini LLM for scheduler adjustments)
+    // AI ADJUSTMENT MODE (Hybrid Deterministic + Gemini Fallback)
     // -------------------------------------------------------------
-    while (attemptCount < maxAttempts) {
+    // 1. First attempt fast, hallucination-free deterministic solver for targeted directives
+    if (payload.preferences.customNotes) {
+      const parsedIntent = parseRefineInstruction(
+        payload.preferences.customNotes,
+        payload.offerings.map((o) => ({ code: o.subject.code || '', title: o.subject.title || '' }))
+      );
+
+      const hybridProposed = solveDeterministicRefine(
+        payload,
+        parsedIntent,
+        activeBaselineEntries,
+        engineContext
+      );
+
+      if (hybridProposed && hybridProposed.length > 0) {
+        attemptCount = 1;
+        const candidateEntries: ScheduleEntryInput[] = hybridProposed.map((p, idx) => {
+          const off = payload.offerings.find((o) => o.id === p.offeringId);
+          return {
+            id: `draft-hybrid-${idx}`,
+            offeringId: p.offeringId,
+            blockId: payload.block.id,
+            subjectId: off?.subject.id || '',
+            instructorId: p.instructorId,
+            roomId: p.roomId || null,
+            dayOfWeek: p.dayOfWeek,
+            startTime: p.startTime.slice(0, 5),
+            endTime: p.endTime.slice(0, 5),
+            sessionType: p.sessionType,
+          };
+        });
+
+        const allCandidateEntries = [...activeBaselineEntries, ...candidateEntries];
+        const violations = checkSchedule(allCandidateEntries, engineContext);
+        const hardViolations = violations.filter((v) => v.severity === 'hard');
+        detectedSoftViolations = violations.filter((v) => v.severity === 'soft');
+
+        if (hardViolations.length === 0) {
+          cleanEntriesToWrite = candidateEntries;
+          finalRawOutput = {
+            solver: 'hybrid_deterministic_ai_engine',
+            intent: parsedIntent,
+            writtenCount: cleanEntriesToWrite.length,
+          };
+        }
+      }
+    }
+
+    // 2. If hybrid solver didn't resolve (e.g. open-ended full-block reshuffle), use Gemini
+    while (cleanEntriesToWrite.length === 0 && attemptCount < maxAttempts) {
       attemptCount++;
 
       let proposed: ProposedEntry[] = [];

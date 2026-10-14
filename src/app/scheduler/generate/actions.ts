@@ -222,7 +222,15 @@ function isHighSchoolSubject(sub: { code?: string; title?: string }): boolean {
     const blockOfferings = await ensureOfferingsForBlock(supabase, termId, block.id);
     refreshedOfferings.push(...blockOfferings);
   }
-  offerings = refreshedOfferings.length > 0 ? refreshedOfferings : offerings;
+  // Safely merge refreshed offerings with all existing term offerings
+  const offeringsMap = new Map<string, ClassOffering & { subjects?: Subject | null }>();
+  for (const off of offerings) {
+    offeringsMap.set(off.id, off);
+  }
+  for (const off of refreshedOfferings) {
+    offeringsMap.set(off.id, off);
+  }
+  offerings = Array.from(offeringsMap.values());
 
   const metaMap = getCurriculumMetadataMap();
 

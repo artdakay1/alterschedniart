@@ -178,6 +178,12 @@ export function WeeklyTimetableGrid({
   const scaleRatio = zoomDensity === '70%' ? 0.75 : zoomDensity === '85%' ? 0.88 : 1.0;
   const containerMinWidth = zoomDensity === '70%' ? '700px' : zoomDensity === '85%' ? '800px' : '920px';
 
+  const blockLabel = selectedBlock ? formatBlockLabel(selectedBlock) : '';
+  const isHs =
+    blockLabel.toLowerCase().includes('grade') ||
+    blockLabel.toLowerCase().includes('high school') ||
+    blockLabel.toUpperCase().startsWith('HS');
+
   return (
     <div className="bg-white rounded-4 shadow-sm border border-white overflow-hidden">
       {/* Grid Header Info */}
@@ -290,6 +296,29 @@ export function WeeklyTimetableGrid({
                       }
                     }}
                   >
+                    {/* Dedicated Permanent Institutional Lunch Break Indicator */}
+                    <div
+                      className="position-absolute start-0 end-0 d-flex align-items-center justify-content-center text-center px-1 border-top border-bottom border-warning border-opacity-50"
+                      style={{
+                        top: `${isHs ? 5.0 * HOUR_HEIGHT : 5.5 * HOUR_HEIGHT}px`,
+                        height: `${isHs ? 1.0 * HOUR_HEIGHT : 0.5 * HOUR_HEIGHT}px`,
+                        zIndex: 3,
+                        pointerEvents: 'none',
+                        backgroundColor: 'rgba(255, 193, 7, 0.08)',
+                        backgroundImage:
+                          'repeating-linear-gradient(45deg, rgba(255, 193, 7, 0.08), rgba(255, 193, 7, 0.08) 6px, transparent 6px, transparent 12px)',
+                      }}
+                      title={isHs ? 'High School Lunch Break: 12:00 - 13:00' : 'College Lunch Break: 12:30 - 13:00'}
+                    >
+                      <span
+                        className="badge bg-warning bg-opacity-25 text-dark border border-warning-subtle fw-semibold px-1.5 py-0.5 d-inline-flex align-items-center gap-1 shadow-xs"
+                        style={{ fontSize: '9px', lineHeight: '1.2' }}
+                      >
+                        <i className="bi bi-cup-hot" style={{ fontSize: '9px' }}></i>
+                        <span>{isHs ? 'Lunch 12:00-13:00' : 'Lunch 12:30-13:00'}</span>
+                      </span>
+                    </div>
+
                     {/* Background Hour Grid Lines & Half-hour Drop Targets */}
                     {TIME_SLOTS.map((slot) => {
                       const isSlotHovered =

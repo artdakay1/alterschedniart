@@ -649,9 +649,17 @@ export function ScheduleEditorClient({
     let targetRoomId: string | null = null;
     let targetInstructorId: string | null = null;
     let durationHours = 1.5;
-    let blockId: string | null = null;
+    let blockId: string | null = selectedBlockId || null;
     let entryIdToExclude: string | null = null;
     let sessionType: 'lecture' | 'lab' = 'lecture';
+
+    const currentBlock = blocks.find((b) => b.id === (blockId || selectedBlockId));
+    const blockLabel = formatBlockLabel(currentBlock);
+    const isHs =
+      blockLabel.toLowerCase().includes('grade') ||
+      blockLabel.toLowerCase().includes('high school') ||
+      blockLabel.toUpperCase().startsWith('HS');
+    const lunch = isHs ? { s: '12:00', e: '13:00' } : { s: '12:30', e: '13:00' };
 
     if (draggingEntryId) {
       entryIdToExclude = draggingEntryId;
@@ -679,15 +687,19 @@ export function ScheduleEditorClient({
       if (targetSubject && targetSubject.lecture_hours > 0 && targetSubject.lab_hours > 0) {
         if (!hasLec) {
           sessionType = 'lecture';
-          durationHours = targetSubject.lecture_hours;
+          durationHours = 1.5;
         } else if (!hasLab) {
           sessionType = 'lab';
-          durationHours = targetSubject.lab_hours;
+          durationHours = 1.5;
         } else {
           sessionType = 'lecture';
           durationHours = 1.5;
         }
       } else if (targetSubject && targetSubject.lecture_hours === 3 && targetSubject.lab_hours === 0) {
+        sessionType = 'lecture';
+        durationHours = 1.5;
+      } else if (targetSubject && targetSubject.units === 3 && !isHs) {
+        // College 3-unit courses follow 1.5h canonical MW/TTH pattern
         sessionType = 'lecture';
         durationHours = 1.5;
       } else {
@@ -708,14 +720,6 @@ export function ScheduleEditorClient({
         targetRoomId = targetRoom?.id || null;
       }
     }
-
-    const currentBlock = blocks.find((b) => b.id === blockId);
-    const blockLabel = formatBlockLabel(currentBlock);
-    const isHs =
-      blockLabel.toLowerCase().includes('grade') ||
-      blockLabel.toLowerCase().includes('high school') ||
-      blockLabel.toUpperCase().startsWith('HS');
-    const lunch = isHs ? { s: '12:00', e: '13:00' } : { s: '12:30', e: '13:00' };
 
     const qualInsts = targetSubject
       ? instructors.filter((inst) =>
@@ -789,10 +793,13 @@ export function ScheduleEditorClient({
 
     // 1. Lunch break conflict
     if (timeRangesOverlap(slotStart, slotEnd, lunch.s, lunch.e)) {
+      const isInsideLunch = slotStart >= lunch.s && slotStart < lunch.e;
       conflicts.push({
         type: 'lunch',
-        badge: 'Lunch Break',
-        message: `Overlaps lunch break (${lunch.s} - ${lunch.e})`,
+        badge: isInsideLunch ? 'Lunch Break' : `Exceeds Lunch (${slotEnd})`,
+        message: isInsideLunch
+          ? `Inside lunch break window (${lunch.s} - ${lunch.e})`
+          : `Class starting at ${slotStart} (${durationHours}h) ends at ${slotEnd}, cutting into lunch break (${lunch.s} - ${lunch.e})`,
       });
     }
 
